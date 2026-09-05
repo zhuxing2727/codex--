@@ -112,20 +112,3 @@ node --check .\ccswitch-ergouzi-usage-query.js
 node --check .\ccswitch-ergouzi-agent-usage-query.js
 powershell -ExecutionPolicy Bypass -File .\tools\build-installer.ps1 -SkipRuntimeDownload
 ```
-
-## 上传到 GitHub
-
-```powershell
-git remote set-url origin https://github.com/zhuxing2727/codex--.git
-git branch -M main
-git add .
-git status
-git commit -m "发布 Ergouzi 小鲸鱼余额挂件"
-git push -u origin main
-```
-
-首次推送时按 GitHub 提示登录，不要在命令中写入 API Key 或密码。
-
-## License
-
-MIT
