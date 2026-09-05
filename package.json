@@ -1,7 +1,7 @@
 {
   "name": "dsh-whale-widget",
   "version": "0.2.10",
-  "description": "DSH Web 界面右下角的 DeepSeek 余额小鲸鱼挂件（含今日已用、峰谷定价、随机台词、音效与每轮消耗统计）",
+  "description": "Ergouzi 本地代理版小鲸鱼余额挂件，适用于 CC Switch/Codex",
   "keywords": [
     "dsh",
     "dsh-plugin",
@@ -15,16 +15,26 @@
     "lib",
     "assets",
     "cordis.patch.yml",
-    "README.md"
+    "README.md",
+    "ccswitch-ergouzi-usage-query.js",
+    "ccswitch-ergouzi-agent-usage-query.js",
+    "ergouzi-account-agent.mjs",
+    "ergouzi-wallet-token-sync.mjs",
+    "start-wallet-token-sync.cmd",
+    "start-ergouzi-agent.cmd",
+    "whale-overlay.ps1",
+    "start-whale-overlay.cmd",
+    "tools/build-installer.ps1",
+    "tools/InstallerBootstrap.cs"
   ],
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/MeteorNOX/DeepSeek-Balance-Whale-Widget.git"
+    "url": "git+https://github.com/zhuxing2727/codex--.git"
   },
   "bugs": {
-    "url": "https://github.com/MeteorNOX/DeepSeek-Balance-Whale-Widget/issues"
+    "url": "https://github.com/zhuxing2727/codex--/issues"
   },
-  "homepage": "https://github.com/MeteorNOX/DeepSeek-Balance-Whale-Widget#readme",
+  "homepage": "https://github.com/zhuxing2727/codex--#readme",
   "dsh": {
     "bundle": {
       "patch": "./cordis.patch.yml"
