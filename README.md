@@ -1,4 +1,4 @@
-# Ergouzi 小鲸鱼余额挂件
+# Ergouzi 余额挂件
 
 适用于 Windows 的 CC Switch / Codex 余额挂件迁移版。
 
@@ -12,15 +12,21 @@
 - 内置 Node.js 的 Windows 安装程序，支持自定义安装目录、桌面图标和完整卸载。
 - 托盘菜单支持从 GitHub 检查更新，并可覆盖当前目录或卸载后改装到其他目录。
 
+## v0.2.20
+
+- 卸载窗口显示阶段文字和连续进度条；更新时选择“否”也会显示同一卸载进度。
+- 卸载器保持在 `m3QAQ` 同级目录，只删除带安装标记的 `m3QAQ`，不会删除父目录或磁盘根目录。
+- 托盘菜单支持更新长效令牌，令牌使用 Windows DPAPI 加密保存。
+
 ## 快速安装
 
 从仓库源码运行构建脚本即可生成 `ErgouziWhaleWidget-Setup.exe`。安装时用户选择父文件夹，程序会固定在该文件夹内部创建 `m3QAQ` 作为实际安装目录，并创建桌面快捷方式 `余额挂件.lnk`。卸载程序位于所选父文件夹中，与 `m3QAQ` 同级，会停止组件、删除整个 `m3QAQ` 目录、删除快捷方式，并清理挂件状态和本地账户代理数据；开始菜单“余额挂件”文件夹也会生成同名卸载快捷方式。旧版 `Uninstall-ErgouziWhaleWidget.exe` 不再打包。
 
 钱包登录页使用安装目录内独立的 `wallet-browser` Edge 配置，不再复用旧安装的浏览器自动填充账号或密码。卸载器只接受目录名为 `m3QAQ` 且包含有效安装标记的路径，会先按该 profile 关闭 Edge 整棵进程树，再停止 Node/PowerShell 进程，从安装目录外启动清理脚本，反复删除整个 `m3QAQ` 目录，直到目录消失；不会删除用户选择的父文件夹或磁盘根目录。
 
-首次启动后，托盘后台会自动打开 Ergouzi 钱包页面，在页面完成登录一次即可。托盘菜单可重新打开登录页、显示挂件、重启组件、检查更新或退出后台。也可以下载 `ErgouziWhaleWidget-Portable.zip`，解压后运行 `ErgouziWhaleWidget.exe`（旧版 `start-whale-overlay.cmd` 仍兼容）。
+首次启动后，托盘后台会自动打开 Ergouzi 钱包页面，在页面完成登录一次即可。托盘菜单可重新打开登录页、更新令牌、显示挂件、重启组件、检查更新或退出后台。也可以下载 `ErgouziWhaleWidget-Portable.zip`，解压后运行 `ErgouziWhaleWidget.exe`（旧版 `start-whale-overlay.cmd` 仍兼容）。
 
-更新检查使用仓库 `https://github.com/zhuxing2727/codex--` 的最新 Release。检测到新版本后，“是”会下载 Windows 安装包并覆盖当前安装目录；“否”会先完全卸载，再打开安装器选择新的安装目录；“取消”则不执行更新。程序会自动尝试显式代理、Windows 系统代理/PAC 和直连；如需手动指定，可设置 `ERGOUZI_UPDATE_PROXY` 或 `HTTPS_PROXY`，值使用系统提供的代理地址。
+更新检查使用仓库 `https://github.com/zhuxing2727/codex--` 的最新 Release。检测到新版本后，“是”会下载 Windows 安装包并覆盖当前安装目录；“否”会先完全卸载，再打开安装器选择新的安装目录；“取消”则不执行更新。卸载和“否”分支都会显示阶段文字与进度条，完成后再继续后续操作。程序会自动尝试显式代理、Windows 系统代理/PAC 和直连；如需手动指定，可设置 `ERGOUZI_UPDATE_PROXY` 或 `HTTPS_PROXY`，值使用系统提供的代理地址。
 
 ## CC Switch 配置
 

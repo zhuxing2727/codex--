@@ -1,6 +1,6 @@
-# DeepSeek 余额小鲸鱼挂件 —— 完整生成提示词
+# DeepSeek 余额余额挂件挂件 —— 完整生成提示词
 
-> 用途：在 DeepSeek Harness（DSH）的 Web 界面右下角常驻一个「小鲸鱼余额挂件」。
+> 用途：在 DeepSeek Harness（DSH）的 Web 界面右下角常驻一个「余额挂件余额挂件」。
 > 本提示词汇总了完整需求、架构、全部行为规格、视觉参数与踩坑结论，可直接交给 AI 复现或维护。
 > 文中 `C:\Users\Meteor\.dsh\profiles\web\`、`D:\TestBox\deepseek\` 等为本机示例路径，迁移时请替换为你环境中的实际路径。
 > 当前版本：v0.2.5（含今日已用双模式、峰谷定价、随机台词、音效、汉堡菜单与每轮对话消耗统计）。
@@ -11,10 +11,10 @@
 
 实现一个 DSH Web 界面右下角的余额挂件：
 
-- 小鲸鱼 cut-out 本体（`assets/DSniang1.png`）+ **代码绘制的白色对话气泡**（SVG 椭圆 + 尾巴），气泡内叠加三行文字。
+- 余额挂件 cut-out 本体（`assets/DSniang1.png`）+ **代码绘制的白色对话气泡**（SVG 椭圆 + 尾巴），气泡内叠加三行文字。
 - 余额来自 DeepSeek 官方接口 `GET https://api.deepseek.com/user/balance`，从 `balance_infos` 中选取展示项（优先 CNY 且余额 > 0，其次任意非零项，再退回 CNY 项，最后取第一项；接口返回的多币种数组顺序不固定，不可直接取 `[0]`），请求头 `Authorization: Bearer <key>`，key 从 DSH 凭据服务读 `DEEPSEEK_API_KEY`。
 - **今日已用**双模式（菜单可选）：
-  - 小鲸鱼记账（默认，免令牌）：观测余额差值自动记账，持久化到 `.dshw-usage.json`，跨天归零归档。
+  - 余额挂件记账（默认，免令牌）：观测余额差值自动记账，持久化到 `.dshw-usage.json`，跨天归零归档。
   - 实时·令牌：读 `DEEPSEEK_PLATFORM_TOKEN`，调平台用量接口按峰谷定价换算。
 - **每轮对话消耗统计**：宿主插件监听 `session/event`，捕获 `assistant/message` 的真实 usage（input/cache/output/reasoning tokens），按 `turn` 聚合；`turn/end` 时结算本轮金额（复用峰谷定价表）写入 `/dsh-whale/last-turn.json`（seq 递增）。前端每秒轮询，出现新 seq 且「每轮对话后自动显示消耗金额」开启时弹出消耗金额泡泡（居中两行：A 样式「上一轮对话消耗:」+ 红色 B 样式「¥X.XX」）；自动关闭时间可设秒数（0=不自动关闭）；消耗泡泡显示期间余额变动不弹普通泡泡。
 - 支持：拖拽、四分之一区域吸附（上下左右四边）、左吸附整体水平翻转（文字同步）、汉堡菜单（大小/音效/音量/用量模式/峰谷文案/气泡开关/每轮消耗开关与自动关闭时间）、按压 Q 弹 + 音效、余额数字滚动动画、60 秒自动刷新 + 点击手动刷新、随机台词气泡（点击切换/关闭）、**每次打开界面自动启用（常驻自启）**。
@@ -56,7 +56,7 @@
 
 ### 今日已用（两种模式）
 
-**小鲸鱼记账（默认，usageMode='ledger'）**：
+**余额挂件记账（默认，usageMode='ledger'）**：
 - 每次拿到余额后，把 `totalBalance` 观测记入 `.dshw-usage.json`：`{ date, lastBalance, lastCurrency, todayUsage, history }`。
 - 同一天内：若余额比上次观测**下降**，差值累加到 `todayUsage`；余额上升（充值）不扣减，只更新 `lastBalance`。
 - **币种感知**：观测币种与 `lastCurrency` 不同时，只重置基准（`lastBalance`/`lastCurrency`），不记差值——数值跳变来自币种切换而非真实消费（#13：`[0]` 选币时代 CNY/USD 随机切换曾把每次跳变记成一笔消费，单日虚记数千元）。
@@ -91,7 +91,7 @@
 ```
 div.dshwv-root（position:fixed，承载定位与翻转）
 ├─ div.dshwv-body（绝对定位铺满，承载按压 Q 弹缩放）
-│  ├─ img.dshwv-img（src=/dsh-whale/image.png，cut-out 鲸鱼，右下角 59.45%）
+│  ├─ img.dshwv-img（src=/dsh-whale/image.png，cut-out 挂件，右下角 59.45%）
 │  └─ div.dshwv-bubble（SVG 气泡：大椭圆 + 尾巴 + 两个小气泡，z-index:1）
 │     ├─ img.dshwv-gif（随机台词 gif，默认隐藏）
 │     └─ div.dshwv-text（三行：label / amount / hint，绝对定位居中）
@@ -108,8 +108,8 @@ div.dshwv-root（position:fixed，承载定位与翻转）
 - **四分之一吸附**（横、纵两轴独立判定，自由组合，互不打架）：中心 x < 视口宽/4 → 吸附左缘；中心 x > 3×视口宽/4 → 吸附右缘；中心 y < 视口高/4 → 吸附顶缘；中心 y > 3×视口高/4 → 吸附底缘；其余保持释放点坐标。
 - **为什么必须用 left/top 像素**：若右吸附切换成 `left:auto; right:0`，CSS 过渡无法在 `auto` 与数值间插值，右侧吸附会瞬间跳变（闪现）。
 - **锚点保持**：吸附信息（`state.h/v` + 偏移）存入状态；`settle()` 在窗口 resize 与尺寸调整时按锚点重算，已吸附的挂件保持贴边；未锚定轴仅做视口钳制。
-- **角落固定缩放**：调整大小时以鲸鱼所在角为固定点（未翻转=右下角，翻转=左下角），保证鲸鱼不"乱跑"。
-- 拖拽用 pointer 事件 + `setPointerCapture`；位移平方 ≥ 9（>3px）判定拖动，否则为点击（点击鲸鱼=打开气泡+刷新）；拖拽中 `transition:none` 1:1 跟手，松手后 `settle()` 带动画滑向吸附位。
+- **角落固定缩放**：调整大小时以挂件所在角为固定点（未翻转=右下角，翻转=左下角），保证挂件不"乱跑"。
+- 拖拽用 pointer 事件 + `setPointerCapture`；位移平方 ≥ 9（>3px）判定拖动，否则为点击（点击挂件=打开气泡+刷新）；拖拽中 `transition:none` 1:1 跟手，松手后 `settle()` 带动画滑向吸附位。
 
 ### 左吸附水平翻转
 
@@ -127,17 +127,17 @@ div.dshwv-root（position:fixed，承载定位与翻转）
 
 ### 汉堡菜单
 
-- 悬停鲸鱼显示右上角三点按钮；点击开/关菜单。
+- 悬停挂件显示右上角三点按钮；点击开/关菜单。
 - 行1 大小：range 0.6–2.5（step 0.1）+ number 1–20（线性映射 1→0.6，20→2.5，默认 1.5=10）；滑块拖动期间给根元素 `transition:none`（CSS 过渡在 JS 块之后才求值，否则滑块会以错误中心缩放抖动）。
 - 行2 音效：select `小黄鸭`(duck, Ya1/Ya2) / `音效1`(fx1, D1/D2)。
 - 行3 音量：range 0–1；音量 0 时自动关声音。
-- 行4 用量：select `小鲸鱼记账 (推荐)`(ledger) / `实时·令牌 (用法：去问dsh)`(token)。
+- 行4 用量：select `余额挂件记账 (推荐)`(ledger) / `实时·令牌 (用法：去问dsh)`(token)。
 - 所有设置 PUT `/dsh-whale/size.json` 持久化；打开页面时 GET 恢复。
 - 菜单 `color-scheme:light`，保证暗色主题下可读。
 
 ### 余额刷新与状态机
 
-- **自动刷新**：`setInterval(refresh, 60000)`；**手动刷新**：点击鲸鱼（同时打开气泡）。
+- **自动刷新**：`setInterval(refresh, 60000)`；**手动刷新**：点击挂件（同时打开气泡）。
 - 请求期间提示行显示「加载中…」（金额保持显示）；数据到达后**淡出淡入**切换到「今日已用 …」。
 - 自动刷新：静默，**仅当余额实际变化**时弹气泡 + 数字滚动（700ms ease-out 三次方）+ 300ms 后开始滚动；900ms 后落定。
 - 客户端 fetch 带 25 秒 AbortController 超时。
@@ -145,7 +145,7 @@ div.dshwv-root（position:fixed，承载定位与翻转）
 
 ### 随机台词气泡（点击切换/关闭）
 
-- 点击鲸鱼 → 气泡弹出显示正常内容（余额 + 今日已用），总时长 **5 秒**自动收起。
+- 点击挂件 → 气泡弹出显示正常内容（余额 + 今日已用），总时长 **5 秒**自动收起。
 - **首次点击气泡** → 淡出淡入切换到随机台词段；**再次点击** → 关闭（切换不延长总时长）。
 - 台词六组按权重随机（`pickRandomLines` 加权抽样）：
   1. 权重 20：三行（A 样式「当前时间段为:」/ B 样式峰谷「空闲时段」绿 或「高峰时段」红（P 档字号，比金额 B 略小）/ C 样式「今日已用 ¥X」）
@@ -161,7 +161,7 @@ div.dshwv-root（position:fixed，承载定位与翻转）
 
 | 项 | 值 |
 |---|---|
-| 鲸鱼本体图 | `assets/DSniang1.png` 610×610 cut-out，右下角 `right:0;bottom:0;width:59.45%` |
+| 挂件本体图 | `assets/DSniang1.png` 610×610 cut-out，右下角 `right:0;bottom:0;width:59.45%` |
 | 气泡画布 | 代码内 SVG，viewBox 0 0 1026 700，几何见上文 |
 | 气泡描边 | `#203170`，宽 18，圆角连接 |
 | 文字块定位 | `left:44.25%; top:38%; transform:translate(-50%,-50%)`，`text-align:center`，`color:#536ba9` |
@@ -199,4 +199,4 @@ div.dshwv-root（position:fixed，承载定位与翻转）
 1. 将 `dsh-whale-widget` 作为本地包安装：在仓库根目录 `dsh plugin --profile web add link:.`（或发布后 `dsh plugin --profile web add dsh-whale-widget`），然后重启 `dsh web`。
 2. 验证：`curl http://127.0.0.1:3080/dsh-whale/image.png`（200 image/png）、`/dsh-whale/balance.json`（200 JSON，含真实余额与 todayUsage）、`/dsh-whale/size.json`（GET/PUT 读写回路）、`/dsh-whale/widget.js`（200 JS）、`/dsh-whale/sound/press.mp3?set=duck`（200 audio/mpeg）、`curl http://127.0.0.1:3080/`（index 含 widget.js 脚本标签）。
 3. 浏览器 **F5 刷新页面**后出现挂件。
-4. 交互自测：拖拽 + 四边四分之一吸附（含角落组合）、左吸附镜像翻转、菜单（大小/音效/音量/用量）、按压 Q 弹 + 音效、点击鲸鱼弹气泡 → 首次点击切台词 → 再点关闭、5 秒自动收起、60s 自动刷新、余额变化数字滚动、记账模式跨天归档。
+4. 交互自测：拖拽 + 四边四分之一吸附（含角落组合）、左吸附镜像翻转、菜单（大小/音效/音量/用量）、按压 Q 弹 + 音效、点击挂件弹气泡 → 首次点击切台词 → 再点关闭、5 秒自动收起、60s 自动刷新、余额变化数字滚动、记账模式跨天归档。

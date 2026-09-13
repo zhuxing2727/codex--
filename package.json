@@ -1,7 +1,7 @@
 {
   "name": "dsh-whale-widget",
-  "version": "0.2.19",
-  "description": "Ergouzi 本地代理版小鲸鱼余额挂件，适用于 CC Switch/Codex",
+  "version": "0.2.20",
+  "description": "Ergouzi 本地代理版余额挂件，适用于 CC Switch/Codex",
   "keywords": [
     "dsh",
     "dsh-plugin",

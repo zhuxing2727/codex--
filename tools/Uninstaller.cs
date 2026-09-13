@@ -3,6 +3,7 @@ using System.Diagnostics;
 using System.IO;
 using System.Linq;
 using System.Text;
+using System.Threading;
 using System.Windows.Forms;
 
 internal static class Uninstaller
@@ -32,12 +33,14 @@ internal static class Uninstaller
         {
             int ownerPid = Process.GetCurrentProcess().Id;
             string tempScript = Path.Combine(Path.GetTempPath(), "ergouzi-uninstall-" + Guid.NewGuid().ToString("N") + ".ps1");
+            string progressFile = Path.Combine(Path.GetTempPath(), "ergouzi-uninstall-" + Guid.NewGuid().ToString("N") + ".progress");
             string escapedTarget = target.Replace("'", "''");
             string script = @"
 $ownerPid = OWNER_PID
 $target = 'TARGET'
 $cleanupScript = 'CLEANUP_SCRIPT'
 $selfPath = 'SELF_PATH'
+$progressFile = 'PROGRESS_FILE'
 $targetPrefix = $target.TrimEnd('\') + '\'
 $app = [Environment]::GetFolderPath('ApplicationData')
 $agentData = Join-Path $app 'ergouzi-account-agent'
@@ -47,7 +50,12 @@ $profileNeedle = $profileData.TrimEnd('\')
 $desktop = [Environment]::GetFolderPath('Desktop')
 $programs = Join-Path $app 'Microsoft\Windows\Start Menu\Programs\余额挂件'
 
+function Set-Progress([int]$percent, [string]$message) {
+    try { Set-Content -LiteralPath $progressFile -Value ($percent.ToString() + '|' + $message) -Encoding UTF8 -Force } catch {}
+}
+
 while (Get-Process -Id $ownerPid -ErrorAction SilentlyContinue) { Start-Sleep -Milliseconds 250 }
+Set-Progress 5 '正在停止后台组件...'
 
 function Stop-WidgetProcesses {
     $items = @{}
@@ -94,8 +102,10 @@ function Stop-ProfileEdge {
 }
 
 Stop-ProfileEdge
+Set-Progress 20 '正在关闭钱包浏览器...'
 Stop-WidgetProcesses
 Start-Sleep -Milliseconds 700
+Set-Progress 35 '正在删除快捷方式...'
 Remove-Item -LiteralPath (Join-Path $desktop '余额挂件.lnk') -Force -ErrorAction SilentlyContinue
 Remove-Item -LiteralPath (Join-Path $desktop 'Ergouzi 小鲸鱼.lnk') -Force -ErrorAction SilentlyContinue
 Remove-Item -LiteralPath (Join-Path $programs '卸载余额挂件.lnk') -Force -ErrorAction SilentlyContinue
@@ -103,6 +113,7 @@ Remove-Item -LiteralPath (Join-Path $programs 'Uninstall-ErgouziWhaleWidget.lnk'
 Remove-Item -LiteralPath $programs -Recurse -Force -ErrorAction SilentlyContinue
 Remove-Item -LiteralPath $agentData -Recurse -Force -ErrorAction SilentlyContinue
 Remove-Item -LiteralPath $overlayData -Recurse -Force -ErrorAction SilentlyContinue
+Set-Progress 50 '正在清理本地数据...'
 
 for ($i = 0; $i -lt 30; $i++) {
     Stop-ProfileEdge
@@ -111,19 +122,59 @@ for ($i = 0; $i -lt 30; $i++) {
         try { $_.Attributes = $_.Attributes -band (-bnot [IO.FileAttributes]::ReadOnly) } catch {}
     }
     Remove-Item -LiteralPath $target -Recurse -Force -ErrorAction SilentlyContinue
+    Set-Progress ([Math]::Min(95, 55 + ($i * 2))) ('正在清空安装目录...（第 ' + ($i + 1) + ' 次检查）')
     if (-not (Test-Path -LiteralPath $target)) { break }
     Start-Sleep -Milliseconds 500
 }
+Set-Progress 100 '卸载完成'
 Remove-Item -LiteralPath $cleanupScript -Force -ErrorAction SilentlyContinue
 Remove-Item -LiteralPath $selfPath -Force -ErrorAction SilentlyContinue
+Remove-Item -LiteralPath $progressFile -Force -ErrorAction SilentlyContinue
 ";
-            script = script.Replace("OWNER_PID", ownerPid.ToString()).Replace("TARGET", escapedTarget).Replace("CLEANUP_SCRIPT", tempScript.Replace("'", "''")).Replace("SELF_PATH", selfPath.Replace("'", "''"));
+            script = script.Replace("OWNER_PID", ownerPid.ToString()).Replace("TARGET", escapedTarget).Replace("CLEANUP_SCRIPT", tempScript.Replace("'", "''")).Replace("SELF_PATH", selfPath.Replace("'", "''")).Replace("PROGRESS_FILE", progressFile.Replace("'", "''"));
             File.WriteAllText(tempScript, script, Encoding.UTF8);
             // The cleaner must not inherit the install directory as its current directory;
             // Windows otherwise keeps that directory open and refuses to remove it.
             Process.Start(new ProcessStartInfo { FileName = "powershell.exe", Arguments = "-NoLogo -NoProfile -WindowStyle Hidden -ExecutionPolicy Bypass -File \"" + tempScript + "\"", WorkingDirectory = Path.GetTempPath(), UseShellExecute = false, CreateNoWindow = true });
+            ShowProgressWindow(progressFile, target);
             return 0;
         }
         catch (Exception error) { MessageBox.Show(error.Message, "卸载失败", MessageBoxButtons.OK, MessageBoxIcon.Error); return 1; }
+    }
+
+    private static void ShowProgressWindow(string progressFile, string target)
+    {
+        using (var form = new Form { Text = "正在卸载余额挂件", Width = 500, Height = 150, StartPosition = FormStartPosition.CenterScreen, FormBorderStyle = FormBorderStyle.FixedDialog, MaximizeBox = false, MinimizeBox = false, ControlBox = false })
+        using (var label = new Label { Text = "正在准备...", Left = 18, Top = 18, Width = 445, AutoEllipsis = true })
+        using (var bar = new ProgressBar { Left = 18, Top = 52, Width = 445, Height = 24, Minimum = 0, Maximum = 100, Style = ProgressBarStyle.Continuous })
+        using (var timer = new System.Windows.Forms.Timer { Interval = 150 })
+        {
+            form.Controls.Add(label);
+            form.Controls.Add(bar);
+            timer.Tick += delegate
+            {
+                try
+                {
+                    string value = File.ReadAllText(progressFile, Encoding.UTF8);
+                    int split = value.IndexOf('|');
+                    int percent;
+                    if (split > 0 && Int32.TryParse(value.Substring(0, split), out percent))
+                    {
+                        bar.Value = Math.Max(0, Math.Min(100, percent));
+                        label.Text = value.Substring(split + 1).Trim();
+                    }
+                }
+                catch { }
+                if (!Directory.Exists(target))
+                {
+                    bar.Value = 100;
+                    label.Text = "卸载完成";
+                    timer.Stop();
+                    form.BeginInvoke(new Action(delegate { form.Close(); }));
+                }
+            };
+            timer.Start();
+            Application.Run(form);
+        }
     }
 }
