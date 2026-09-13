@@ -10,7 +10,6 @@ using System.Threading;
 using System.Threading.Tasks;
 using System.Windows.Forms;
 using System.Text.RegularExpressions;
-using Microsoft.Win32;
 
 internal static class ErgouziTrayHost
 {
@@ -82,7 +81,6 @@ internal static class ErgouziTrayHost
         githubReleasesUrl = GetConfig(json, "githubReleasesUrl", "https://github.com/zhuxing2727/codex--/releases");
         updateProxy = GetConfig(json, "updateProxy", "");
         if (String.IsNullOrWhiteSpace(updateProxy)) updateProxy = Environment.GetEnvironmentVariable("ERGOUZI_UPDATE_PROXY") ?? Environment.GetEnvironmentVariable("HTTPS_PROXY") ?? Environment.GetEnvironmentVariable("HTTP_PROXY") ?? "";
-        if (String.IsNullOrWhiteSpace(updateProxy)) updateProxy = GetWindowsUserProxy();
         MutexName = "Local\\" + productName + "TrayHost";
         SignalName = "Local\\" + productName + "TraySignal";
     }
@@ -205,42 +203,61 @@ internal static class ErgouziTrayHost
         return match.Success ? match.Groups[1].Value.Replace("\\/", "/") : "";
     }
 
-    private static WebClient CreateUpdateClient()
+    private static WebClient CreateUpdateClient(bool direct)
     {
+        ServicePointManager.SecurityProtocol = SecurityProtocolType.Tls | SecurityProtocolType.Tls11 | SecurityProtocolType.Tls12;
         var client = new WebClient();
         client.Headers[HttpRequestHeader.UserAgent] = productName + "/" + productVersion;
         client.CachePolicy = new RequestCachePolicy(RequestCacheLevel.NoCacheNoStore);
-        if (!String.IsNullOrWhiteSpace(updateProxy))
+        IWebProxy proxy = null;
+        if (!direct && !String.IsNullOrWhiteSpace(updateProxy))
         {
             Uri proxyUri;
-            string proxyValue = updateProxy.Trim();
+            string proxyValue = SelectProxyValue(updateProxy);
             if (proxyValue.IndexOf("://", StringComparison.Ordinal) < 0) proxyValue = "http://" + proxyValue;
             if (!Uri.TryCreate(proxyValue, UriKind.Absolute, out proxyUri) || String.IsNullOrWhiteSpace(proxyUri.Host) || proxyUri.Port <= 0) throw new InvalidOperationException("更新代理地址无效");
-            client.Proxy = new WebProxy(proxyUri);
+            proxy = new WebProxy(proxyUri);
         }
-        else client.Proxy = WebRequest.DefaultWebProxy;
+        else if (!direct) proxy = WebRequest.DefaultWebProxy;
+        if (proxy != null)
+        {
+            proxy.Credentials = CredentialCache.DefaultCredentials;
+            client.Proxy = proxy;
+        }
+        else client.Proxy = null;
         return client;
     }
 
-    private static string GetWindowsUserProxy()
+    private static string SelectProxyValue(string value)
     {
-        try
+        foreach (string part in (value ?? "").Split(';'))
         {
-            using (var key = Registry.CurrentUser.OpenSubKey(@"Software\Microsoft\Windows\CurrentVersion\Internet Settings"))
-            {
-                if (key == null || Convert.ToInt32(key.GetValue("ProxyEnable", 0)) != 1) return "";
-                string value = Convert.ToString(key.GetValue("ProxyServer", ""));
-                if (String.IsNullOrWhiteSpace(value)) return "";
-                foreach (string part in value.Split(';'))
-                {
-                    string item = part.Trim();
-                    if (item.StartsWith("https=", StringComparison.OrdinalIgnoreCase) || item.StartsWith("http=", StringComparison.OrdinalIgnoreCase)) return item.Substring(item.IndexOf('=') + 1).Trim();
-                }
-                string proxy = value.Trim();
-                return proxy.IndexOf("://", StringComparison.Ordinal) < 0 ? "http://" + proxy : proxy;
-            }
+            string item = part.Trim();
+            if (item.StartsWith("https=", StringComparison.OrdinalIgnoreCase) || item.StartsWith("http=", StringComparison.OrdinalIgnoreCase)) return item.Substring(item.IndexOf('=') + 1).Trim();
         }
-        catch { return ""; }
+        return (value ?? "").Trim();
+    }
+
+    private static string DownloadStringWithFallback(string url)
+    {
+        Exception last = null;
+        foreach (bool direct in new[] { false, true })
+        {
+            try { using (var client = CreateUpdateClient(direct)) return client.DownloadString(url); }
+            catch (Exception error) { last = error; }
+        }
+        throw last ?? new InvalidOperationException("更新请求失败");
+    }
+
+    private static void DownloadFileWithFallback(string url, string destination)
+    {
+        Exception last = null;
+        foreach (bool direct in new[] { false, true })
+        {
+            try { using (var client = CreateUpdateClient(direct)) { client.DownloadFile(url, destination); return; } }
+            catch (Exception error) { last = error; }
+        }
+        throw last ?? new InvalidOperationException("更新下载失败");
     }
 
     private static void CheckForUpdates()
@@ -250,11 +267,7 @@ internal static class ErgouziTrayHost
             try
             {
                 string api = "https://api.github.com/repos/" + githubRepo + "/releases/latest";
-                string json;
-                using (var client = CreateUpdateClient())
-                {
-                    json = client.DownloadString(api);
-                }
+                string json = DownloadStringWithFallback(api);
                 string tag = JsonString(json, "tag_name");
                 string page = JsonString(json, "html_url");
                 string asset = Regex.Match(json, "\\\"browser_download_url\\\"\\s*:\\s*\\\"([^\\\"]+ErgouziWhaleWidget-Setup\\.exe)\\\"", RegexOptions.IgnoreCase).Groups[1].Value.Replace("\\/", "/");
@@ -265,8 +278,7 @@ internal static class ErgouziTrayHost
                 try
                 {
                     string raw = "https://raw.githubusercontent.com/" + githubRepo + "/main/package.json";
-                    string json;
-                    using (var client = CreateUpdateClient()) { json = client.DownloadString(raw); }
+                    string json = DownloadStringWithFallback(raw);
                     ShowUpdateResult(JsonString(json, "version"), githubReleasesUrl, "");
                 }
                 catch (Exception fallbackError)
@@ -313,7 +325,7 @@ internal static class ErgouziTrayHost
             try
             {
                 string setup = Path.Combine(Path.GetTempPath(), "ErgouziWhaleWidget-Setup-v" + version + ".exe");
-                using (var client = CreateUpdateClient()) { client.DownloadFile(assetUrl, setup); }
+                DownloadFileWithFallback(assetUrl, setup);
                 tray.ContextMenuStrip.BeginInvoke(new Action(delegate
                 {
                     if (overwrite)

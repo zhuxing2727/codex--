@@ -18,7 +18,7 @@
 
 首次启动后，托盘后台会自动打开 Ergouzi 钱包页面，在页面完成登录一次即可。托盘菜单可重新打开登录页、显示挂件、重启组件、检查更新或退出后台。也可以下载 `ErgouziWhaleWidget-Portable.zip`，解压后运行 `ErgouziWhaleWidget.exe`（旧版 `start-whale-overlay.cmd` 仍兼容）。
 
-更新检查使用仓库 `https://github.com/zhuxing2727/codex--` 的最新 Release。检测到新版本后，“是”会下载 Windows 安装包并覆盖当前安装目录；“否”会先完全卸载，再打开安装器选择新的安装目录；“取消”则不执行更新。若系统代理未被 .NET 自动识别，可设置 `ERGOUZI_UPDATE_PROXY=http://127.0.0.1:17890`（或 `HTTPS_PROXY`）后重启托盘再检查。
+更新检查使用仓库 `https://github.com/zhuxing2727/codex--` 的最新 Release。检测到新版本后，“是”会下载 Windows 安装包并覆盖当前安装目录；“否”会先完全卸载，再打开安装器选择新的安装目录；“取消”则不执行更新。程序会自动尝试显式代理、Windows 系统代理/PAC 和直连；如需手动指定，可设置 `ERGOUZI_UPDATE_PROXY` 或 `HTTPS_PROXY`，值使用系统提供的代理地址。
 
 ## CC Switch 配置
 
