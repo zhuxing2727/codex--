@@ -55,16 +55,16 @@ $bootstrapExe = Join-Path $dist 'InstallerBootstrap.exe'
 $traySource = Join-Path $PSScriptRoot 'ErgouziTrayHost.cs'
 $uninstallerSource = Join-Path $PSScriptRoot 'Uninstaller.cs'
 $trayExe = Join-Path $stage 'ErgouziWhaleWidget.exe'
-$uninstallerExe = Join-Path $stage '卸载余额挂件.exe'
+$uninstallerExe = Join-Path $stage 'uninstaller.exe'
 $framework = Join-Path $env:WINDIR 'Microsoft.NET\Framework64\v4.0.30319'
 $csc = Join-Path $framework 'csc.exe'
 if (-not (Test-Path -LiteralPath $csc)) { $csc = Join-Path ($framework -replace 'Framework64','Framework') 'csc.exe' }
 if (-not (Test-Path -LiteralPath $csc)) { throw 'csc.exe was not found. Install .NET Framework 4.x Developer Tools.' }
-& $csc /nologo /target:winexe /optimize+ /out:$bootstrapExe /r:System.Windows.Forms.dll /r:System.IO.Compression.dll /r:System.IO.Compression.FileSystem.dll $bootstrapSource
+& $csc /nologo /codepage:65001 /target:winexe /optimize+ /out:$bootstrapExe /r:System.Windows.Forms.dll /r:System.IO.Compression.dll /r:System.IO.Compression.FileSystem.dll $bootstrapSource
 if ($LASTEXITCODE -ne 0) { throw 'Installer bootstrap compilation failed.' }
-& $csc /nologo /target:winexe /optimize+ /out:$trayExe /r:System.Windows.Forms.dll /r:System.Drawing.dll /r:System.Net.Http.dll $traySource
+& $csc /nologo /codepage:65001 /target:winexe /optimize+ /out:$trayExe /r:System.Windows.Forms.dll /r:System.Drawing.dll /r:System.Net.Http.dll $traySource
 if ($LASTEXITCODE -ne 0) { throw 'Tray host compilation failed.' }
-& $csc /nologo /target:winexe /optimize+ /out:$uninstallerExe /r:System.Windows.Forms.dll $uninstallerSource
+& $csc /nologo /codepage:65001 /target:winexe /optimize+ /out:$uninstallerExe /r:System.Windows.Forms.dll $uninstallerSource
 if ($LASTEXITCODE -ne 0) { throw 'Uninstaller compilation failed.' }
 
 Compress-Archive -Path (Join-Path $stage '*') -DestinationPath $portable -CompressionLevel Optimal

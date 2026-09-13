@@ -1,4 +1,4 @@
-using System;
+﻿using System;
 using System.Diagnostics;
 using System.IO;
 using System.IO.Compression;
@@ -11,6 +11,7 @@ internal static class InstallerBootstrap
 {
     private static readonly byte[] Marker = Encoding.ASCII.GetBytes("ERGOUZI_PAYLOAD_START\n");
     private const string InstallFolderName = "m3QAQ";
+    private const string UninstallerFileName = "\u5378\u8F7D\u4F59\u989D\u6302\u4EF6.exe";
 
     private static int FindMarker(byte[] data)
     {
@@ -135,7 +136,7 @@ internal static class InstallerBootstrap
         }
     }
 
-    private static void CreateShortcut(string target)
+    private static void CreateShortcut(string target, string uninstaller)
     {
         string desktop = Environment.GetFolderPath(Environment.SpecialFolder.DesktopDirectory);
         string shortcut = Path.Combine(desktop, "余额挂件.lnk");
@@ -157,8 +158,8 @@ internal static class InstallerBootstrap
         string oldUninstallShortcut = Path.Combine(programs, "Uninstall-ErgouziWhaleWidget.lnk");
         try { if (File.Exists(oldUninstallShortcut)) File.Delete(oldUninstallShortcut); } catch { }
         dynamic uninstallLink = shell.CreateShortcut(uninstallShortcut);
-        uninstallLink.TargetPath = Path.Combine(target, "卸载余额挂件.exe");
-        uninstallLink.WorkingDirectory = target;
+        uninstallLink.TargetPath = uninstaller;
+        uninstallLink.WorkingDirectory = Path.GetDirectoryName(uninstaller);
         uninstallLink.IconLocation = Path.Combine(target, "assets", "balance-widget.ico") + ",0";
         uninstallLink.WindowStyle = 1;
         uninstallLink.Description = "卸载余额挂件";
@@ -177,7 +178,14 @@ internal static class InstallerBootstrap
             StopPreviousInstall(target);
             ExtractPayload(target);
             try { File.Delete(Path.Combine(target, "Uninstall-ErgouziWhaleWidget.exe")); } catch { }
-            CreateShortcut(target);
+            string parent = Directory.GetParent(target).FullName;
+            string bundledUninstaller = Path.Combine(target, "uninstaller.exe");
+            string externalUninstaller = Path.Combine(parent, UninstallerFileName);
+            if (!File.Exists(bundledUninstaller)) throw new InvalidDataException("安装包缺少卸载程序。");
+            File.Copy(bundledUninstaller, externalUninstaller, true);
+            File.Delete(bundledUninstaller);
+            try { File.Delete(Path.Combine(target, UninstallerFileName)); } catch { }
+            CreateShortcut(target, externalUninstaller);
             File.WriteAllText(Path.Combine(target, "install.path"), target + Environment.NewLine, Encoding.UTF8);
             string tray = Path.Combine(target, "ErgouziWhaleWidget.exe");
             if (File.Exists(tray)) Process.Start(new ProcessStartInfo { FileName = tray, WorkingDirectory = target, UseShellExecute = true, WindowStyle = ProcessWindowStyle.Hidden });

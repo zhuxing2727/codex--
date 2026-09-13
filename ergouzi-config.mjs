@@ -7,7 +7,7 @@ const rootDir = path.dirname(fileURLToPath(import.meta.url))
 const defaultConfigFile = path.join(rootDir, 'ergouzi.config.json')
 const configFile = process.env.ERGOUZI_CONFIG_FILE || defaultConfigFile
 const defaults = {
-  version: '0.2.18',
+  version: '0.2.19',
   githubRepo: 'zhuxing2727/codex--',
   githubReleasesUrl: 'https://github.com/zhuxing2727/codex--/releases',
   updateProxy: '',

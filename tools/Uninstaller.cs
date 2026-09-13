@@ -1,4 +1,4 @@
-using System;
+﻿using System;
 using System.Diagnostics;
 using System.IO;
 using System.Linq;
@@ -12,13 +12,15 @@ internal static class Uninstaller
     [STAThread]
     public static int Main()
     {
-        string target = AppDomain.CurrentDomain.BaseDirectory.TrimEnd(Path.DirectorySeparatorChar);
+        string parent = AppDomain.CurrentDomain.BaseDirectory.TrimEnd(Path.DirectorySeparatorChar);
+        string target = Path.Combine(parent, InstallFolderName);
+        string selfPath = Path.Combine(parent, Path.GetFileName(Process.GetCurrentProcess().MainModule.FileName));
         string markerPath = Path.Combine(target, "install.path");
         string trayPath = Path.Combine(target, "ErgouziWhaleWidget.exe");
         string markerValue = "";
         try { markerValue = File.ReadAllText(markerPath).Trim(); } catch { }
         bool markerMatches = String.Equals(Path.GetFullPath(markerValue).TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar), target, StringComparison.OrdinalIgnoreCase);
-        if (!String.Equals(Path.GetFileName(target), InstallFolderName, StringComparison.OrdinalIgnoreCase) || !File.Exists(markerPath) || !File.Exists(trayPath) || !markerMatches)
+        if (!String.Equals(Path.GetFileName(target), InstallFolderName, StringComparison.OrdinalIgnoreCase) || !File.Exists(markerPath) || !File.Exists(trayPath) || !markerMatches || !String.Equals(Path.GetDirectoryName(target), parent, StringComparison.OrdinalIgnoreCase))
         {
             MessageBox.Show("卸载已取消：只允许删除带有有效安装标记的 m3QAQ 目录。", "卸载余额挂件", MessageBoxButtons.OK, MessageBoxIcon.Warning);
             return 2;
@@ -35,6 +37,7 @@ internal static class Uninstaller
 $ownerPid = OWNER_PID
 $target = 'TARGET'
 $cleanupScript = 'CLEANUP_SCRIPT'
+$selfPath = 'SELF_PATH'
 $targetPrefix = $target.TrimEnd('\') + '\'
 $app = [Environment]::GetFolderPath('ApplicationData')
 $agentData = Join-Path $app 'ergouzi-account-agent'
@@ -112,8 +115,9 @@ for ($i = 0; $i -lt 30; $i++) {
     Start-Sleep -Milliseconds 500
 }
 Remove-Item -LiteralPath $cleanupScript -Force -ErrorAction SilentlyContinue
+Remove-Item -LiteralPath $selfPath -Force -ErrorAction SilentlyContinue
 ";
-            script = script.Replace("OWNER_PID", ownerPid.ToString()).Replace("TARGET", escapedTarget).Replace("CLEANUP_SCRIPT", tempScript.Replace("'", "''"));
+            script = script.Replace("OWNER_PID", ownerPid.ToString()).Replace("TARGET", escapedTarget).Replace("CLEANUP_SCRIPT", tempScript.Replace("'", "''")).Replace("SELF_PATH", selfPath.Replace("'", "''"));
             File.WriteAllText(tempScript, script, Encoding.UTF8);
             // The cleaner must not inherit the install directory as its current directory;
             // Windows otherwise keeps that directory open and refuses to remove it.

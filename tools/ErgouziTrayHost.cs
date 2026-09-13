@@ -1,4 +1,4 @@
-using System;
+﻿using System;
 using System.Diagnostics;
 using System.IO;
 using System.IO.Pipes;
@@ -13,9 +13,11 @@ using System.Text.RegularExpressions;
 
 internal static class ErgouziTrayHost
 {
+    private const string UninstallerFileName = "\u5378\u8F7D\u4F59\u989D\u6302\u4EF6.exe";
     private static string MutexName;
     private static string SignalName;
     private static string bindHost;
+    private static int agentPort;
     private static int tokenSyncPort;
     private static string agentHomeName;
     private static int monitorIntervalMs;
@@ -72,6 +74,7 @@ internal static class ErgouziTrayHost
         string json = "";
         try { json = File.ReadAllText(Path.Combine(root, "ergouzi.config.json")); } catch { }
         bindHost = GetConfig(json, "bindHost", "127.0.0.1");
+        agentPort = IntConfig(json, "agentPort", 17891);
         tokenSyncPort = IntConfig(json, "tokenSyncPort", 17892);
         agentHomeName = GetConfig(json, "agentHomeName", "ergouzi-account-agent");
         monitorIntervalMs = IntConfig(json, "trayMonitorIntervalMs", 5000);
@@ -102,6 +105,7 @@ internal static class ErgouziTrayHost
     {
         var menu = new ContextMenuStrip();
         menu.Items.Add("显示挂件", null, delegate { StartOrWakeOverlay(); });
+        menu.Items.Add("更新令牌", null, delegate { ShowTokenUpdateDialog(); });
         menu.Items.Add("打开钱包登录页", null, delegate { PostControl("/internal/open-wallet"); });
         menu.Items.Add("重启账户代理", null, delegate { RestartComponent("ergouzi-account-agent.mjs"); });
         menu.Items.Add("重启钱包同步", null, delegate { RestartComponent("ergouzi-wallet-token-sync.mjs"); });
@@ -199,6 +203,74 @@ internal static class ErgouziTrayHost
                 }
             }
             catch { }
+        });
+    }
+
+    private static string JsonEscape(string value)
+    {
+        return (value ?? "").Replace("\\", "\\\\").Replace("\"", "\\\"").Replace("\r", "\\r").Replace("\n", "\\n");
+    }
+
+    private static string ReadBridgeSecret()
+    {
+        string secretFile = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData), agentHomeName, "bridge.secret");
+        try { return File.ReadAllText(secretFile).Trim(); } catch { return ""; }
+    }
+
+    private static void ShowTokenUpdateDialog()
+    {
+        using (var form = new Form { Text = "更新余额挂件令牌", Width = 500, Height = 230, StartPosition = FormStartPosition.CenterScreen, FormBorderStyle = FormBorderStyle.FixedDialog, MaximizeBox = false, MinimizeBox = false })
+        using (var label = new Label { Text = "访问令牌（不会写入日志或源码）：", Left = 16, Top = 18, AutoSize = true })
+        using (var token = new TextBox { Left = 16, Top = 42, Width = 450, UseSystemPasswordChar = true })
+        using (var longLived = new CheckBox { Text = "长效令牌：不自动刷新，失效时提示重新更新", Left = 16, Top = 78, Width = 450, Checked = true })
+        using (var expiryLabel = new Label { Text = "过期时间 Unix 秒（非长效令牌填写，未知填 0）：", Left = 16, Top = 112, AutoSize = true })
+        using (var expiry = new TextBox { Left = 16, Top = 136, Width = 180, Text = "0" })
+        using (var save = new Button { Text = "保存", Left = 300, Top = 166, Width = 78, DialogResult = DialogResult.OK })
+        using (var cancel = new Button { Text = "取消", Left = 388, Top = 166, Width = 78, DialogResult = DialogResult.Cancel })
+        {
+            form.Controls.AddRange(new Control[] { label, token, longLived, expiryLabel, expiry, save, cancel });
+            form.AcceptButton = save;
+            form.CancelButton = cancel;
+            if (form.ShowDialog() != DialogResult.OK) return;
+            string value = (token.Text ?? "").Trim();
+            if (value.Length < 16 || value.Length > 8192 || value.Any(Char.IsWhiteSpace))
+            {
+                MessageBox.Show("令牌长度或格式无效。", "更新令牌", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+                return;
+            }
+            long expires = 0;
+            if (!longLived.Checked && (!Int64.TryParse((expiry.Text ?? "").Trim(), out expires) || expires < 0))
+            {
+                MessageBox.Show("过期时间必须是 Unix 秒数字。", "更新令牌", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+                return;
+            }
+            PostTokenUpdate(value, expires, longLived.Checked);
+        }
+    }
+
+    private static void PostTokenUpdate(string token, long expires, bool longLived)
+    {
+        Task.Run(async delegate
+        {
+            try
+            {
+                string secret = ReadBridgeSecret();
+                if (String.IsNullOrEmpty(secret)) throw new InvalidOperationException("本地代理尚未生成桥接密钥，请稍后重试。");
+                string body = "{\"accessToken\":\"" + JsonEscape(token) + "\",\"accessExpiresAt\":" + expires + ",\"longLived\":" + (longLived ? "true" : "false") + "}";
+                using (var client = new HttpClient { Timeout = TimeSpan.FromSeconds(8) })
+                using (var request = new HttpRequestMessage(HttpMethod.Post, "http://" + bindHost + ":" + agentPort + "/internal/update-token"))
+                {
+                    request.Headers.Add("X-Ergouzi-Bridge", secret);
+                    request.Content = new StringContent(body, System.Text.Encoding.UTF8, "application/json");
+                    using (var response = await client.SendAsync(request))
+                    {
+                        string responseBody = await response.Content.ReadAsStringAsync();
+                        if (!response.IsSuccessStatusCode || responseBody.IndexOf("\"ok\":true", StringComparison.OrdinalIgnoreCase) < 0) throw new InvalidOperationException("本地代理拒绝了令牌。");
+                    }
+                }
+                ShowMessage("令牌已更新并加密保存。", "更新令牌");
+            }
+            catch (Exception error) { ShowMessage("令牌更新失败：" + error.Message, "更新令牌"); }
         });
     }
 
@@ -339,7 +411,7 @@ internal static class ErgouziTrayHost
                     }
                     else
                     {
-                        string uninstaller = Path.Combine(root, "卸载余额挂件.exe");
+                        string uninstaller = Path.Combine(Directory.GetParent(root).FullName, UninstallerFileName);
                         if (File.Exists(uninstaller)) Process.Start(new ProcessStartInfo { FileName = uninstaller, Arguments = "--silent", UseShellExecute = true });
                         Task.Run(delegate
                         {

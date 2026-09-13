@@ -58,11 +58,13 @@ function requirePowerShell(command, value) {
 
 function saveConfig(values) {
   fs.mkdirSync(CONFIG_DIR, { recursive: true })
+  const longLived = values.longLived === true
   const body = {
     accessToken: dpapi(values.accessToken),
     sessionId: values.sessionId ? dpapi(values.sessionId) : '',
     cookie: values.cookie ? dpapi(values.cookie) : '',
-    accessExpiresAt: Number(values.accessExpiresAt || 0),
+    longLived,
+    accessExpiresAt: longLived ? 0 : Number(values.accessExpiresAt || 0),
     updatedAt: new Date().toISOString(),
   }
   fs.writeFileSync(CONFIG_FILE, JSON.stringify(body, null, 2), { encoding: 'utf8', mode: 0o600 })
@@ -89,6 +91,7 @@ function loadConfig() {
     accessToken: dpapi(body.accessToken, true),
     sessionId: body.sessionId ? dpapi(body.sessionId, true) : '',
     cookie: body.cookie ? dpapi(body.cookie, true) : '',
+    longLived: body.longLived === true,
     accessExpiresAt: Number(body.accessExpiresAt || 0),
   }
 }
@@ -172,6 +175,7 @@ async function requestWalletReload() {
 
 async function performTokenRefresh() {
   config ||= loadConfig()
+  if (config.longLived) return
   if (config.accessExpiresAt > Math.floor(Date.now() / 1000) + 60) return
   if (!config.sessionId && !config.cookie) {
     if (await requestWalletReload()) return
@@ -197,6 +201,7 @@ async function performTokenRefresh() {
 
 async function refreshIfNeeded() {
   config ||= loadConfig()
+  if (config.longLived) return
   if (config.accessExpiresAt > Math.floor(Date.now() / 1000) + 60) return
   if (!refreshLock) {
     refreshLock = performTokenRefresh().finally(() => { refreshLock = null })
@@ -370,8 +375,12 @@ async function importToken(req) {
   const cookie = body.cookie === undefined
     ? (current.cookie || '')
     : String(body.cookie || '').trim()
-  const accessExpiresAt = importedExpiry(accessToken, body.accessExpiresAt || body.access_expires_at)
-  const next = { accessToken, sessionId, cookie, accessExpiresAt }
+  // Automatic wallet imports must not silently replace a manually configured
+  // long-lived token. The tray's update dialog sends an explicit boolean.
+  if (body.longLived === undefined && current.longLived === true) return { ok: true, accessExpiresAt: 0, longLived: true, unchanged: true }
+  const longLived = body.longLived === undefined ? current.longLived === true : body.longLived === true
+  const accessExpiresAt = longLived ? 0 : importedExpiry(accessToken, body.accessExpiresAt || body.access_expires_at)
+  const next = { accessToken, sessionId, cookie, accessExpiresAt, longLived }
   saveConfig(next)
   config = next
   return { ok: true, accessExpiresAt }
@@ -386,7 +395,7 @@ function startServer() {
     }
     try {
       if (req.url === '/health') return send(res, 200, { ok: true })
-      if (req.method === 'POST' && req.url === '/internal/import-token') {
+      if (req.method === 'POST' && (req.url === '/internal/import-token' || req.url === '/internal/update-token')) {
         if (!isAllowedBrowserOrigin(origin) || !hasBridgeSecret(req)) return send(res, 403, { ok: false, code: 'BRIDGE_DENIED' })
         return send(res, 200, await importToken(req))
       }
@@ -409,7 +418,7 @@ async function setup() {
   const expires = (await rl.question('令牌过期时间 Unix 秒（未知填 0）: ')).trim()
   rl.close()
   if (!accessToken) throw new Error('access token is required')
-  saveConfig({ accessToken, sessionId, cookie, accessExpiresAt: importedExpiry(accessToken, expires) })
+  saveConfig({ accessToken, sessionId, cookie, accessExpiresAt: importedExpiry(accessToken, expires), longLived: false })
   console.log('已加密保存到 ' + CONFIG_FILE)
 }
 
