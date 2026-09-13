@@ -95,7 +95,7 @@ internal static class InstallerBootstrap
     private static void StopPreviousInstall(string target)
     {
         string needle = target.Replace("'", "''");
-        string script = "$needle='" + needle + "'; Get-CimInstance Win32_Process | Where-Object { $_.CommandLine -and $_.CommandLine.Contains($needle) } | ForEach-Object { if ($_.ProcessId -ne $PID) { Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue } }";
+        string script = "$needle='" + needle + "'; Get-CimInstance Win32_Process | Where-Object { $_.CommandLine -and $_.CommandLine.Contains($needle) -and $_.Name -notmatch 'ErgouziWhaleWidget-Setup|InstallerBootstrap' } | ForEach-Object { if ($_.ProcessId -ne $PID) { Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue } }";
         string encoded = Convert.ToBase64String(Encoding.Unicode.GetBytes(script));
         using (var process = Process.Start(new ProcessStartInfo { FileName = "powershell.exe", Arguments = "-NoLogo -NoProfile -NonInteractive -ExecutionPolicy Bypass -EncodedCommand " + encoded, UseShellExecute = false, CreateNoWindow = true }))
         { if (process != null) process.WaitForExit(10000); }

@@ -5,10 +5,12 @@ using System.IO.Pipes;
 using System.Linq;
 using System.Net.Http;
 using System.Net;
+using System.Net.Cache;
 using System.Threading;
 using System.Threading.Tasks;
 using System.Windows.Forms;
 using System.Text.RegularExpressions;
+using Microsoft.Win32;
 
 internal static class ErgouziTrayHost
 {
@@ -22,6 +24,7 @@ internal static class ErgouziTrayHost
     private static string productVersion;
     private static string githubRepo;
     private static string githubReleasesUrl;
+    private static string updateProxy;
     private static readonly object Gate = new object();
     private static readonly System.Collections.Generic.List<Process> Children = new System.Collections.Generic.List<Process>();
     private static NotifyIcon tray;
@@ -77,6 +80,9 @@ internal static class ErgouziTrayHost
         productVersion = GetConfig(json, "version", "0.0.0");
         githubRepo = GetConfig(json, "githubRepo", "zhuxing2727/codex--");
         githubReleasesUrl = GetConfig(json, "githubReleasesUrl", "https://github.com/zhuxing2727/codex--/releases");
+        updateProxy = GetConfig(json, "updateProxy", "");
+        if (String.IsNullOrWhiteSpace(updateProxy)) updateProxy = Environment.GetEnvironmentVariable("ERGOUZI_UPDATE_PROXY") ?? Environment.GetEnvironmentVariable("HTTPS_PROXY") ?? Environment.GetEnvironmentVariable("HTTP_PROXY") ?? "";
+        if (String.IsNullOrWhiteSpace(updateProxy)) updateProxy = GetWindowsUserProxy();
         MutexName = "Local\\" + productName + "TrayHost";
         SignalName = "Local\\" + productName + "TraySignal";
     }
@@ -199,6 +205,44 @@ internal static class ErgouziTrayHost
         return match.Success ? match.Groups[1].Value.Replace("\\/", "/") : "";
     }
 
+    private static WebClient CreateUpdateClient()
+    {
+        var client = new WebClient();
+        client.Headers[HttpRequestHeader.UserAgent] = productName + "/" + productVersion;
+        client.CachePolicy = new RequestCachePolicy(RequestCacheLevel.NoCacheNoStore);
+        if (!String.IsNullOrWhiteSpace(updateProxy))
+        {
+            Uri proxyUri;
+            string proxyValue = updateProxy.Trim();
+            if (proxyValue.IndexOf("://", StringComparison.Ordinal) < 0) proxyValue = "http://" + proxyValue;
+            if (!Uri.TryCreate(proxyValue, UriKind.Absolute, out proxyUri) || String.IsNullOrWhiteSpace(proxyUri.Host) || proxyUri.Port <= 0) throw new InvalidOperationException("更新代理地址无效");
+            client.Proxy = new WebProxy(proxyUri);
+        }
+        else client.Proxy = WebRequest.DefaultWebProxy;
+        return client;
+    }
+
+    private static string GetWindowsUserProxy()
+    {
+        try
+        {
+            using (var key = Registry.CurrentUser.OpenSubKey(@"Software\Microsoft\Windows\CurrentVersion\Internet Settings"))
+            {
+                if (key == null || Convert.ToInt32(key.GetValue("ProxyEnable", 0)) != 1) return "";
+                string value = Convert.ToString(key.GetValue("ProxyServer", ""));
+                if (String.IsNullOrWhiteSpace(value)) return "";
+                foreach (string part in value.Split(';'))
+                {
+                    string item = part.Trim();
+                    if (item.StartsWith("https=", StringComparison.OrdinalIgnoreCase) || item.StartsWith("http=", StringComparison.OrdinalIgnoreCase)) return item.Substring(item.IndexOf('=') + 1).Trim();
+                }
+                string proxy = value.Trim();
+                return proxy.IndexOf("://", StringComparison.Ordinal) < 0 ? "http://" + proxy : proxy;
+            }
+        }
+        catch { return ""; }
+    }
+
     private static void CheckForUpdates()
     {
         Task.Run(delegate
@@ -207,9 +251,8 @@ internal static class ErgouziTrayHost
             {
                 string api = "https://api.github.com/repos/" + githubRepo + "/releases/latest";
                 string json;
-                using (var client = new WebClient())
+                using (var client = CreateUpdateClient())
                 {
-                    client.Headers[HttpRequestHeader.UserAgent] = productName + "/" + productVersion;
                     json = client.DownloadString(api);
                 }
                 string tag = JsonString(json, "tag_name");
@@ -223,10 +266,14 @@ internal static class ErgouziTrayHost
                 {
                     string raw = "https://raw.githubusercontent.com/" + githubRepo + "/main/package.json";
                     string json;
-                    using (var client = new WebClient()) { client.Headers[HttpRequestHeader.UserAgent] = productName + "/" + productVersion; json = client.DownloadString(raw); }
+                    using (var client = CreateUpdateClient()) { json = client.DownloadString(raw); }
                     ShowUpdateResult(JsonString(json, "version"), githubReleasesUrl, "");
                 }
-                catch { ShowMessage("暂时无法连接 GitHub 检查更新。", "检查更新"); }
+                catch (Exception fallbackError)
+                {
+                    string detail = String.IsNullOrWhiteSpace(updateProxy) ? "请检查网络或设置 ERGOUZI_UPDATE_PROXY。" : "请检查更新代理地址：" + updateProxy;
+                    ShowMessage("暂时无法连接 GitHub 检查更新。\n" + detail + "\n" + fallbackError.Message, "检查更新");
+                }
             }
         });
     }
@@ -266,7 +313,7 @@ internal static class ErgouziTrayHost
             try
             {
                 string setup = Path.Combine(Path.GetTempPath(), "ErgouziWhaleWidget-Setup-v" + version + ".exe");
-                using (var client = new WebClient()) { client.Headers[HttpRequestHeader.UserAgent] = productName + "/" + productVersion; client.DownloadFile(assetUrl, setup); }
+                using (var client = CreateUpdateClient()) { client.DownloadFile(assetUrl, setup); }
                 tray.ContextMenuStrip.BeginInvoke(new Action(delegate
                 {
                     if (overwrite)
@@ -275,7 +322,7 @@ internal static class ErgouziTrayHost
                     }
                     else
                     {
-                        string uninstaller = Path.Combine(root, "卸载余额挂件.exe");
+                        string uninstaller = Path.Combine(root, "Uninstall-ErgouziWhaleWidget.exe");
                         if (File.Exists(uninstaller)) Process.Start(new ProcessStartInfo { FileName = uninstaller, Arguments = "--silent", UseShellExecute = true });
                         Task.Run(delegate
                         {

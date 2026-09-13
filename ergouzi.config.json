@@ -1,8 +1,9 @@
 {
   "productName": "ErgouziWhaleWidget",
-  "version": "0.2.12",
+  "version": "0.2.13",
   "githubRepo": "zhuxing2727/codex--",
   "githubReleasesUrl": "https://github.com/zhuxing2727/codex--/releases",
+  "updateProxy": "",
   "baseUrl": "https://ergouzi.life",
   "bindHost": "127.0.0.1",
   "agentPort": 17891,

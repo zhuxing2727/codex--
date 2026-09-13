@@ -19,7 +19,7 @@ $excluded = @('.git','.catpaw','_rollback_verify','dist','node_modules','runtime
 Get-ChildItem -LiteralPath $project -Force -Recurse | ForEach-Object {
   $relative = $_.FullName.Substring($project.Length).TrimStart('\','/')
   if ($excluded | Where-Object { $relative -eq $_ -or $relative.StartsWith($_ + '\') }) { return }
-  if ($_.Name -match '\.(baseline|log)$' -or $_.Name -in @('DIFF_FILE','VERIFICATION.txt','ROLLBACK.sh')) { return }
+  if ($_.Name -match '\.(baseline|log)$' -or $_.Name -in @('DIFF_FILE','VERIFICATION.txt','ROLLBACK.sh','MODIFIED_FILE','MODIFIED_FILE.rollback-copy')) { return }
   $destination = Join-Path $stage $relative
   if ($_.PSIsContainer) { New-Item -ItemType Directory -Force -Path $destination | Out-Null }
   else {
@@ -55,7 +55,7 @@ $bootstrapExe = Join-Path $dist 'InstallerBootstrap.exe'
 $traySource = Join-Path $PSScriptRoot 'ErgouziTrayHost.cs'
 $uninstallerSource = Join-Path $PSScriptRoot 'Uninstaller.cs'
 $trayExe = Join-Path $stage 'ErgouziWhaleWidget.exe'
-$uninstallerExe = Join-Path $stage '卸载余额挂件.exe'
+$uninstallerExe = Join-Path $stage 'Uninstall-ErgouziWhaleWidget.exe'
 $framework = Join-Path $env:WINDIR 'Microsoft.NET\Framework64\v4.0.30319'
 $csc = Join-Path $framework 'csc.exe'
 if (-not (Test-Path -LiteralPath $csc)) { $csc = Join-Path ($framework -replace 'Framework64','Framework') 'csc.exe' }
