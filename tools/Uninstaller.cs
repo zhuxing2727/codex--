@@ -7,10 +7,22 @@ using System.Windows.Forms;
 
 internal static class Uninstaller
 {
+    private const string InstallFolderName = "m3QAQ";
+
     [STAThread]
     public static int Main()
     {
         string target = AppDomain.CurrentDomain.BaseDirectory.TrimEnd(Path.DirectorySeparatorChar);
+        string markerPath = Path.Combine(target, "install.path");
+        string trayPath = Path.Combine(target, "ErgouziWhaleWidget.exe");
+        string markerValue = "";
+        try { markerValue = File.ReadAllText(markerPath).Trim(); } catch { }
+        bool markerMatches = String.Equals(Path.GetFullPath(markerValue).TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar), target, StringComparison.OrdinalIgnoreCase);
+        if (!String.Equals(Path.GetFileName(target), InstallFolderName, StringComparison.OrdinalIgnoreCase) || !File.Exists(markerPath) || !File.Exists(trayPath) || !markerMatches)
+        {
+            MessageBox.Show("卸载已取消：只允许删除带有有效安装标记的 m3QAQ 目录。", "卸载余额挂件", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+            return 2;
+        }
         string[] args = Environment.GetCommandLineArgs();
         bool silent = args.Any(value => String.Equals(value, "--silent", StringComparison.OrdinalIgnoreCase) || String.Equals(value, "/S", StringComparison.OrdinalIgnoreCase));
         if (!silent && MessageBox.Show("确定要完全卸载余额挂件吗？\n将删除程序、快捷方式、挂件状态和本地账户代理数据。", "卸载余额挂件", MessageBoxButtons.YesNo, MessageBoxIcon.Warning) != DialogResult.Yes) return 0;

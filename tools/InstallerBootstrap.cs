@@ -10,6 +10,7 @@ using System.Windows.Forms;
 internal static class InstallerBootstrap
 {
     private static readonly byte[] Marker = Encoding.ASCII.GetBytes("ERGOUZI_PAYLOAD_START\n");
+    private const string InstallFolderName = "m3QAQ";
 
     private static int FindMarker(byte[] data)
     {
@@ -24,12 +25,10 @@ internal static class InstallerBootstrap
 
     private static string PickTarget(string requested)
     {
-        if (!String.IsNullOrWhiteSpace(requested)) return Path.GetFullPath(requested.Trim());
-        string defaultPath = String.IsNullOrWhiteSpace(requested)
-            ? Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "ErgouziWhaleWidget")
-            : requested;
+        if (!String.IsNullOrWhiteSpace(requested)) return ResolveInstallTarget(requested);
+        string defaultPath = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "ErgouziWhaleWidget");
         using (var form = new Form { Text = "安装余额挂件", Width = 560, Height = 180, StartPosition = FormStartPosition.CenterScreen, FormBorderStyle = FormBorderStyle.FixedDialog, MaximizeBox = false, MinimizeBox = false })
-        using (var label = new Label { Text = "选择安装位置：", Left = 18, Top = 20, AutoSize = true })
+        using (var label = new Label { Text = "选择安装父文件夹（程序将安装到其中的 m3QAQ 子目录）：", Left = 18, Top = 20, AutoSize = true })
         using (var box = new TextBox { Left = 18, Top = 48, Width = 420, Text = defaultPath })
         using (var browse = new Button { Text = "浏览...", Left = 446, Top = 46, Width = 82 })
         using (var install = new Button { Text = "安装", Left = 350, Top = 92, Width = 82, DialogResult = DialogResult.OK })
@@ -42,8 +41,15 @@ internal static class InstallerBootstrap
             if (form.ShowDialog() != DialogResult.OK) return null;
             string target = (box.Text ?? "").Trim();
             if (target.Length == 0) throw new InvalidOperationException("安装目录不能为空。");
-            return Path.GetFullPath(target);
+            return ResolveInstallTarget(target);
         }
+    }
+
+    private static string ResolveInstallTarget(string selectedPath)
+    {
+        string selected = Path.GetFullPath(selectedPath.Trim()).TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar);
+        if (String.Equals(Path.GetFileName(selected), InstallFolderName, StringComparison.OrdinalIgnoreCase)) return selected;
+        return Path.Combine(selected, InstallFolderName);
     }
 
     private static void BrowseForFolder(Form owner, TextBox targetBox, Button browseButton, string initialPath)
@@ -55,7 +61,7 @@ internal static class InstallerBootstrap
             string selected = null;
             try
             {
-                using (var dialog = new FolderBrowserDialog { Description = "选择余额挂件安装目录", SelectedPath = initialPath, ShowNewFolderButton = true })
+                using (var dialog = new FolderBrowserDialog { Description = "选择余额挂件安装父文件夹，程序将创建 m3QAQ 子目录", SelectedPath = initialPath, ShowNewFolderButton = true })
                 {
                     if (dialog.ShowDialog() == DialogResult.OK) selected = dialog.SelectedPath;
                 }
@@ -76,8 +82,14 @@ internal static class InstallerBootstrap
     {
         string full = Path.GetFullPath(target).TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar);
         string root = Path.GetPathRoot(full).TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar);
+        if (!String.Equals(Path.GetFileName(full), InstallFolderName, StringComparison.OrdinalIgnoreCase)) throw new InvalidOperationException("安装目录必须是所选文件夹内的 m3QAQ 子目录。\n实际安装位置：" + Path.Combine(full, InstallFolderName));
         if (String.IsNullOrEmpty(full) || String.Equals(full, root, StringComparison.OrdinalIgnoreCase)) throw new InvalidOperationException("不能将磁盘根目录作为安装目录。");
         if (String.Equals(full, Environment.GetFolderPath(Environment.SpecialFolder.Windows), StringComparison.OrdinalIgnoreCase)) throw new InvalidOperationException("不能将 Windows 系统目录作为安装目录。");
+        DirectoryInfo parentInfo = Directory.GetParent(full);
+        string parent = parentInfo == null ? "" : parentInfo.FullName.TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar);
+        string windows = Environment.GetFolderPath(Environment.SpecialFolder.Windows).TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar);
+        string windowsPrefix = windows + Path.DirectorySeparatorChar;
+        if (String.Equals(parent, windows, StringComparison.OrdinalIgnoreCase) || parent.StartsWith(windowsPrefix, StringComparison.OrdinalIgnoreCase)) throw new InvalidOperationException("不能将 Windows 系统目录或其子目录作为安装父文件夹。");
         if (Directory.Exists(full))
         {
             string tray = Path.Combine(full, "ErgouziWhaleWidget.exe");

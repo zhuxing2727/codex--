@@ -14,9 +14,9 @@
 
 ## 快速安装
 
-从仓库源码运行构建脚本即可生成 `ErgouziWhaleWidget-Setup.exe`。安装时可在窗口中选择任意目录，程序会在所选目录保存全部运行文件并创建桌面快捷方式 `余额挂件.lnk`。快捷方式使用缩小后的角色图标 `assets/balance-widget.ico`。安装目录内的 `卸载余额挂件.exe` 会停止组件、删除程序文件、删除快捷方式，并清理挂件状态和本地账户代理数据；开始菜单“余额挂件”文件夹也会生成同名卸载快捷方式。旧版 `Uninstall-ErgouziWhaleWidget.exe` 不再打包。
+从仓库源码运行构建脚本即可生成 `ErgouziWhaleWidget-Setup.exe`。安装时用户选择父文件夹，程序会固定在该文件夹内部创建 `m3QAQ` 作为实际安装目录，并创建桌面快捷方式 `余额挂件.lnk`。快捷方式使用缩小后的角色图标 `assets/balance-widget.ico`。安装目录内的 `卸载余额挂件.exe` 会停止组件、删除整个 `m3QAQ` 目录、删除快捷方式，并清理挂件状态和本地账户代理数据；开始菜单“余额挂件”文件夹也会生成同名卸载快捷方式。旧版 `Uninstall-ErgouziWhaleWidget.exe` 不再打包。
 
-钱包登录页使用安装目录内独立的 `wallet-browser` Edge 配置，不再复用旧安装的浏览器自动填充账号或密码。卸载器会先停止使用该目录的 Edge/Node/PowerShell 进程，再反复删除整个安装目录，直到目录消失。
+钱包登录页使用安装目录内独立的 `wallet-browser` Edge 配置，不再复用旧安装的浏览器自动填充账号或密码。卸载器只接受目录名为 `m3QAQ` 且包含有效安装标记的路径，会先停止相关 Edge/Node/PowerShell 进程，再反复删除整个 `m3QAQ` 目录，直到目录消失；不会删除用户选择的父文件夹或磁盘根目录。
 
 首次启动后，托盘后台会自动打开 Ergouzi 钱包页面，在页面完成登录一次即可。托盘菜单可重新打开登录页、显示挂件、重启组件、检查更新或退出后台。也可以下载 `ErgouziWhaleWidget-Portable.zip`，解压后运行 `ErgouziWhaleWidget.exe`（旧版 `start-whale-overlay.cmd` 仍兼容）。
 
@@ -83,7 +83,7 @@ dist\ErgouziWhaleWidget-Portable.zip
 
 安装包包含图片、中文/日文语音、PowerShell 悬浮窗、本地代理和内置 Node.js，不依赖构建电脑的用户名或固定盘符。
 
-安装器也支持更新器传入 `--target "D:\\Apps\\ErgouziWhaleWidget"`，用于无须再次选择目录的覆盖安装。
+安装器也支持更新器传入 `--target "D:\\Apps\\m3QAQ"` 或父文件夹路径；传入父文件夹时仍会自动落到其下的 `m3QAQ`，用于无须再次选择目录的覆盖安装。即使父文件夹是 `C:\\` 或 `D:\\`，卸载器也只会删除其中的 `m3QAQ` 子目录。
 
 ## 适配其他中转站
 
