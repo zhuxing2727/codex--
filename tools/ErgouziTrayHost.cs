@@ -148,7 +148,7 @@ internal static class ErgouziTrayHost
         lock (Gate)
         {
             if (Children.Any(p => !p.HasExited && p.StartInfo.Arguments.IndexOf(path, StringComparison.OrdinalIgnoreCase) >= 0)) return;
-            var child = Process.Start(new ProcessStartInfo
+            var startInfo = new ProcessStartInfo
             {
                 FileName = exe,
                 Arguments = args,
@@ -156,7 +156,12 @@ internal static class ErgouziTrayHost
                 UseShellExecute = false,
                 CreateNoWindow = hidden,
                 WindowStyle = hidden ? ProcessWindowStyle.Hidden : ProcessWindowStyle.Normal,
-            });
+            };
+            if (String.Equals(file, "ergouzi-wallet-token-sync.mjs", StringComparison.OrdinalIgnoreCase))
+            {
+                startInfo.EnvironmentVariables["ERGOUZI_WALLET_PROFILE"] = Path.Combine(root, "wallet-browser");
+            }
+            var child = Process.Start(startInfo);
             if (child != null)
             {
                 child.EnableRaisingEvents = true;

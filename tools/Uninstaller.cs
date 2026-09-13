@@ -17,9 +17,63 @@ internal static class Uninstaller
         try
         {
             int ownerPid = Process.GetCurrentProcess().Id;
-            string script = "$ownerPid=" + ownerPid + "; $target='" + target.Replace("'", "''") + "'; $app=[Environment]::GetFolderPath('ApplicationData'); $agentData=Join-Path $app 'ergouzi-account-agent'; $overlayData=Join-Path $app 'DeepSeekWhaleOverlay'; $desktop=[Environment]::GetFolderPath('Desktop'); $programs=Join-Path $app 'Microsoft\\Windows\\Start Menu\\Programs\\余额挂件'; while (Get-Process -Id $ownerPid -ErrorAction SilentlyContinue) { Start-Sleep -Milliseconds 250 }; Get-CimInstance Win32_Process | Where-Object { $_.CommandLine -and ( $_.CommandLine.Contains($target) -or $_.CommandLine.Contains($agentData) -or $_.CommandLine.Contains($overlayData) ) -and $_.ProcessId -ne $PID } | ForEach-Object { Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue }; Start-Sleep -Milliseconds 700; Remove-Item -LiteralPath ($desktop + '\\余额挂件.lnk') -Force -ErrorAction SilentlyContinue; Remove-Item -LiteralPath ($desktop + '\\Ergouzi 小鲸鱼.lnk') -Force -ErrorAction SilentlyContinue; Remove-Item -LiteralPath (Join-Path $programs '卸载余额挂件.lnk') -Force -ErrorAction SilentlyContinue; Remove-Item -LiteralPath (Join-Path $programs 'Uninstall-ErgouziWhaleWidget.lnk') -Force -ErrorAction SilentlyContinue; Remove-Item -LiteralPath $programs -Recurse -Force -ErrorAction SilentlyContinue; Remove-Item -LiteralPath $agentData -Recurse -Force -ErrorAction SilentlyContinue; Remove-Item -LiteralPath $overlayData -Recurse -Force -ErrorAction SilentlyContinue; for ($i=0; $i -lt 20; $i++) { Remove-Item -LiteralPath $target -Recurse -Force -ErrorAction SilentlyContinue; Remove-Item -LiteralPath $agentData -Recurse -Force -ErrorAction SilentlyContinue; Remove-Item -LiteralPath $overlayData -Recurse -Force -ErrorAction SilentlyContinue; if (-not (Test-Path -LiteralPath $target)) { break }; Start-Sleep -Milliseconds 500 }";
-            string encoded = Convert.ToBase64String(Encoding.Unicode.GetBytes(script));
-            Process.Start(new ProcessStartInfo { FileName = "powershell.exe", Arguments = "-NoLogo -NoProfile -WindowStyle Hidden -ExecutionPolicy Bypass -EncodedCommand " + encoded, UseShellExecute = false, CreateNoWindow = true });
+            string tempScript = Path.Combine(Path.GetTempPath(), "ergouzi-uninstall-" + Guid.NewGuid().ToString("N") + ".ps1");
+            string escapedTarget = target.Replace("'", "''");
+            string script = @"
+$ownerPid = OWNER_PID
+$target = 'TARGET'
+$cleanupScript = 'CLEANUP_SCRIPT'
+$targetPrefix = $target.TrimEnd('\') + '\'
+$app = [Environment]::GetFolderPath('ApplicationData')
+$agentData = Join-Path $app 'ergouzi-account-agent'
+$overlayData = Join-Path $app 'DeepSeekWhaleOverlay'
+$profileData = Join-Path $agentData 'wallet-browser'
+$desktop = [Environment]::GetFolderPath('Desktop')
+$programs = Join-Path $app 'Microsoft\Windows\Start Menu\Programs\余额挂件'
+
+while (Get-Process -Id $ownerPid -ErrorAction SilentlyContinue) { Start-Sleep -Milliseconds 250 }
+
+function Stop-WidgetProcesses {
+    $items = @{}
+    Get-CimInstance Win32_Process -ErrorAction SilentlyContinue | ForEach-Object {
+        if ($_.ProcessId -eq $PID -or $_.ProcessId -eq $ownerPid) { return }
+        $commandLine = [string]$_.CommandLine
+        $processPath = ''
+        try { $processPath = [string](Get-Process -Id $_.ProcessId -ErrorAction Stop).Path } catch {}
+        $owned = ($processPath -and $processPath.StartsWith($targetPrefix, [StringComparison]::OrdinalIgnoreCase)) -or
+            ($commandLine -and ($commandLine.IndexOf($target, [StringComparison]::OrdinalIgnoreCase) -ge 0 -or
+                $commandLine.IndexOf($agentData, [StringComparison]::OrdinalIgnoreCase) -ge 0 -or
+                $commandLine.IndexOf($profileData, [StringComparison]::OrdinalIgnoreCase) -ge 0 -or
+                $commandLine.IndexOf($overlayData, [StringComparison]::OrdinalIgnoreCase) -ge 0))
+        if ($owned) { $items[$_.ProcessId] = $true }
+    }
+    foreach ($id in $items.Keys) { Stop-Process -Id ([int]$id) -Force -ErrorAction SilentlyContinue }
+}
+
+Stop-WidgetProcesses
+Start-Sleep -Milliseconds 700
+Remove-Item -LiteralPath (Join-Path $desktop '余额挂件.lnk') -Force -ErrorAction SilentlyContinue
+Remove-Item -LiteralPath (Join-Path $desktop 'Ergouzi 小鲸鱼.lnk') -Force -ErrorAction SilentlyContinue
+Remove-Item -LiteralPath (Join-Path $programs '卸载余额挂件.lnk') -Force -ErrorAction SilentlyContinue
+Remove-Item -LiteralPath (Join-Path $programs 'Uninstall-ErgouziWhaleWidget.lnk') -Force -ErrorAction SilentlyContinue
+Remove-Item -LiteralPath $programs -Recurse -Force -ErrorAction SilentlyContinue
+Remove-Item -LiteralPath $agentData -Recurse -Force -ErrorAction SilentlyContinue
+Remove-Item -LiteralPath $overlayData -Recurse -Force -ErrorAction SilentlyContinue
+
+for ($i = 0; $i -lt 30; $i++) {
+    Stop-WidgetProcesses
+    Get-ChildItem -LiteralPath $target -Force -Recurse -ErrorAction SilentlyContinue | ForEach-Object {
+        try { $_.Attributes = $_.Attributes -band (-bnot [IO.FileAttributes]::ReadOnly) } catch {}
+    }
+    Remove-Item -LiteralPath $target -Recurse -Force -ErrorAction SilentlyContinue
+    if (-not (Test-Path -LiteralPath $target)) { break }
+    Start-Sleep -Milliseconds 500
+}
+Remove-Item -LiteralPath $cleanupScript -Force -ErrorAction SilentlyContinue
+";
+            script = script.Replace("OWNER_PID", ownerPid.ToString()).Replace("TARGET", escapedTarget).Replace("CLEANUP_SCRIPT", tempScript.Replace("'", "''"));
+            File.WriteAllText(tempScript, script, Encoding.UTF8);
+            Process.Start(new ProcessStartInfo { FileName = "powershell.exe", Arguments = "-NoLogo -NoProfile -WindowStyle Hidden -ExecutionPolicy Bypass -File \"" + tempScript + "\"", UseShellExecute = false, CreateNoWindow = true });
             return 0;
         }
         catch (Exception error) { MessageBox.Show(error.Message, "卸载失败", MessageBoxButtons.OK, MessageBoxIcon.Error); return 1; }

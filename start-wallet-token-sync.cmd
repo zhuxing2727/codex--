@@ -6,4 +6,5 @@ where node.exe >nul 2>nul
 if not exist "%~dp0runtime\node.exe" if errorlevel 1 if exist "%ProgramFiles%\nodejs\node.exe" set "NODE_EXE=%ProgramFiles%\nodejs\node.exe"
 if "%NODE_EXE%"=="node.exe" where node.exe >nul 2>nul
 if errorlevel 1 if not exist "%~dp0runtime\node.exe" if not exist "%ProgramFiles%\nodejs\node.exe" (echo Node.js runtime not found. & exit /b 1)
+set "ERGOUZI_WALLET_PROFILE=%~dp0wallet-browser"
 start "Ergouzi Wallet Token Sync" "%NODE_EXE%" "%~dp0ergouzi-wallet-token-sync.mjs"

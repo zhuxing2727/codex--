@@ -16,6 +16,8 @@
 
 从仓库源码运行构建脚本即可生成 `ErgouziWhaleWidget-Setup.exe`。安装时可在窗口中选择任意目录，程序会在所选目录保存全部运行文件并创建桌面快捷方式 `余额挂件.lnk`。快捷方式使用缩小后的角色图标 `assets/balance-widget.ico`。安装目录内的 `卸载余额挂件.exe` 会停止组件、删除程序文件、删除快捷方式，并清理挂件状态和本地账户代理数据；开始菜单“余额挂件”文件夹也会生成同名卸载快捷方式。旧版 `Uninstall-ErgouziWhaleWidget.exe` 不再打包。
 
+钱包登录页使用安装目录内独立的 `wallet-browser` Edge 配置，不再复用旧安装的浏览器自动填充账号或密码。卸载器会先停止使用该目录的 Edge/Node/PowerShell 进程，再反复删除整个安装目录，直到目录消失。
+
 首次启动后，托盘后台会自动打开 Ergouzi 钱包页面，在页面完成登录一次即可。托盘菜单可重新打开登录页、显示挂件、重启组件、检查更新或退出后台。也可以下载 `ErgouziWhaleWidget-Portable.zip`，解压后运行 `ErgouziWhaleWidget.exe`（旧版 `start-whale-overlay.cmd` 仍兼容）。
 
 更新检查使用仓库 `https://github.com/zhuxing2727/codex--` 的最新 Release。检测到新版本后，“是”会下载 Windows 安装包并覆盖当前安装目录；“否”会先完全卸载，再打开安装器选择新的安装目录；“取消”则不执行更新。程序会自动尝试显式代理、Windows 系统代理/PAC 和直连；如需手动指定，可设置 `ERGOUZI_UPDATE_PROXY` 或 `HTTPS_PROXY`，值使用系统提供的代理地址。
@@ -111,7 +113,7 @@ dist\ErgouziWhaleWidget-Portable.zip
 ```text
 %APPDATA%\ergouzi-account-agent\config.json
 %APPDATA%\ergouzi-account-agent\bridge.secret
-%APPDATA%\ergouzi-account-agent\wallet-browser\
+<安装目录>\wallet-browser\
 ```
 
 项目的 `.gitignore` 已排除认证相关文件、本机验证记录、回滚目录和临时文件。每台电脑都应使用自己的 Ergouzi 账号登录。
