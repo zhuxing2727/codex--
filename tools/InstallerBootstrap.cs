@@ -2,108 +2,119 @@ using System;
 using System.Diagnostics;
 using System.IO;
 using System.IO.Compression;
-using System.Runtime.InteropServices;
+using System.Linq;
+using System.Text;
+using System.Windows.Forms;
 
 internal static class InstallerBootstrap
 {
-    private static readonly byte[] Marker = System.Text.Encoding.ASCII.GetBytes("ERGOUZI_PAYLOAD_START\n");
+    private static readonly byte[] Marker = Encoding.ASCII.GetBytes("ERGOUZI_PAYLOAD_START\n");
 
     private static int FindMarker(byte[] data)
     {
         for (int i = data.Length - Marker.Length; i >= 0; i--)
         {
             bool match = true;
-            for (int j = 0; j < Marker.Length; j++)
-            {
-                if (data[i + j] != Marker[j]) { match = false; break; }
-            }
+            for (int j = 0; j < Marker.Length; j++) if (data[i + j] != Marker[j]) { match = false; break; }
             if (match) return i;
         }
         return -1;
     }
 
-    private static string ExtractPayload()
+    private static string PickTarget(string requested)
+    {
+        if (!String.IsNullOrWhiteSpace(requested)) return Path.GetFullPath(requested.Trim());
+        string defaultPath = String.IsNullOrWhiteSpace(requested)
+            ? Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "ErgouziWhaleWidget")
+            : requested;
+        using (var form = new Form { Text = "安装余额挂件", Width = 560, Height = 180, StartPosition = FormStartPosition.CenterScreen, FormBorderStyle = FormBorderStyle.FixedDialog, MaximizeBox = false, MinimizeBox = false })
+        using (var label = new Label { Text = "选择安装位置：", Left = 18, Top = 20, AutoSize = true })
+        using (var box = new TextBox { Left = 18, Top = 48, Width = 420, Text = defaultPath })
+        using (var browse = new Button { Text = "浏览...", Left = 446, Top = 46, Width = 82 })
+        using (var install = new Button { Text = "安装", Left = 350, Top = 92, Width = 82, DialogResult = DialogResult.OK })
+        using (var cancel = new Button { Text = "取消", Left = 440, Top = 92, Width = 82, DialogResult = DialogResult.Cancel })
+        using (var dialog = new FolderBrowserDialog { Description = "选择余额挂件安装目录", SelectedPath = defaultPath, ShowNewFolderButton = true })
+        {
+            browse.Click += delegate { if (dialog.ShowDialog(form) == DialogResult.OK) box.Text = dialog.SelectedPath; };
+            form.Controls.AddRange(new Control[] { label, box, browse, install, cancel });
+            form.AcceptButton = install;
+            form.CancelButton = cancel;
+            if (form.ShowDialog() != DialogResult.OK) return null;
+            string target = (box.Text ?? "").Trim();
+            if (target.Length == 0) throw new InvalidOperationException("安装目录不能为空。");
+            return Path.GetFullPath(target);
+        }
+    }
+
+    private static void StopPreviousInstall(string target)
+    {
+        string needle = target.Replace("'", "''");
+        string script = "$needle='" + needle + "'; Get-CimInstance Win32_Process | Where-Object { $_.CommandLine -and $_.CommandLine.Contains($needle) } | ForEach-Object { if ($_.ProcessId -ne $PID) { Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue } }";
+        string encoded = Convert.ToBase64String(Encoding.Unicode.GetBytes(script));
+        using (var process = Process.Start(new ProcessStartInfo { FileName = "powershell.exe", Arguments = "-NoLogo -NoProfile -NonInteractive -ExecutionPolicy Bypass -EncodedCommand " + encoded, UseShellExecute = false, CreateNoWindow = true }))
+        { if (process != null) process.WaitForExit(10000); }
+        System.Threading.Thread.Sleep(500);
+    }
+
+    private static void ExtractPayload(string target)
     {
         byte[] executable = File.ReadAllBytes(Process.GetCurrentProcess().MainModule.FileName);
         int marker = FindMarker(executable);
         if (marker < 0) throw new InvalidDataException("Installer payload marker was not found.");
-        string target = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "ErgouziWhaleWidget");
         Directory.CreateDirectory(target);
         using (var input = new MemoryStream(executable, marker + Marker.Length, executable.Length - marker - Marker.Length))
         using (var archive = new ZipArchive(input, ZipArchiveMode.Read))
         {
+            string root = Path.GetFullPath(target).TrimEnd(Path.DirectorySeparatorChar) + Path.DirectorySeparatorChar;
             foreach (ZipArchiveEntry entry in archive.Entries)
             {
                 string destination = Path.GetFullPath(Path.Combine(target, entry.FullName));
-                if (!destination.StartsWith(Path.GetFullPath(target) + Path.DirectorySeparatorChar, StringComparison.OrdinalIgnoreCase))
-                    throw new InvalidDataException("Invalid installer entry path.");
+                if (!destination.StartsWith(root, StringComparison.OrdinalIgnoreCase)) throw new InvalidDataException("Invalid installer entry path.");
                 if (String.IsNullOrEmpty(entry.Name)) { Directory.CreateDirectory(destination); continue; }
                 Directory.CreateDirectory(Path.GetDirectoryName(destination));
                 entry.ExtractToFile(destination, true);
             }
         }
-        return target;
-    }
-
-    private static void StopPreviousInstall(string target)
-    {
-        string script = "$needle=" + ToPowerShellString(target) + "; " +
-            "Get-CimInstance Win32_Process | Where-Object { $_.CommandLine -and $_.CommandLine.Contains($needle) } | " +
-            "ForEach-Object { if ($_.ProcessId -ne $PID) { Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue } }";
-        string encoded = Convert.ToBase64String(System.Text.Encoding.Unicode.GetBytes(script));
-        using (var process = Process.Start(new ProcessStartInfo
-        {
-            FileName = "powershell.exe",
-            Arguments = "-NoLogo -NoProfile -NonInteractive -ExecutionPolicy Bypass -EncodedCommand " + encoded,
-            UseShellExecute = false,
-            CreateNoWindow = true,
-        }))
-        {
-            process.WaitForExit(10000);
-        }
-        System.Threading.Thread.Sleep(1000);
-    }
-
-    private static string ToPowerShellString(string value)
-    {
-        return "'" + value.Replace("'", "''") + "'";
     }
 
     private static void CreateShortcut(string target)
     {
         string desktop = Environment.GetFolderPath(Environment.SpecialFolder.DesktopDirectory);
-        string shortcut = Path.Combine(desktop, "Ergouzi 小鲸鱼.lnk");
+        string shortcut = Path.Combine(desktop, "余额挂件.lnk");
+        string oldShortcut = Path.Combine(desktop, "Ergouzi 小鲸鱼.lnk");
+        try { if (File.Exists(oldShortcut)) File.Delete(oldShortcut); } catch { }
         Type shellType = Type.GetTypeFromProgID("WScript.Shell");
         dynamic shell = Activator.CreateInstance(shellType);
         dynamic link = shell.CreateShortcut(shortcut);
-        link.TargetPath = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.System), "cmd.exe");
-        link.Arguments = "/d /c call \"" + Path.Combine(target, "start-whale-overlay.cmd") + "\"";
+        string tray = Path.Combine(target, "ErgouziWhaleWidget.exe");
+        link.TargetPath = tray;
         link.WorkingDirectory = target;
-        link.Description = "启动 Ergouzi 小鲸鱼余额挂件";
+        link.IconLocation = Path.Combine(target, "assets", "balance-widget.ico") + ",0";
+        link.WindowStyle = 1;
+        link.Description = "启动余额挂件";
         link.Save();
     }
 
-    public static int Main()
+    public static int Main(string[] args)
     {
         try
         {
-            string target = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "ErgouziWhaleWidget");
+            Application.EnableVisualStyles();
+            string requested = args == null ? null : args.SkipWhile(a => !String.Equals(a, "--target", StringComparison.OrdinalIgnoreCase)).Skip(1).FirstOrDefault();
+            string target = PickTarget(requested);
+            if (target == null) return 0;
             StopPreviousInstall(target);
-            target = ExtractPayload();
+            ExtractPayload(target);
             CreateShortcut(target);
-            Process.Start(new ProcessStartInfo
-            {
-                FileName = Path.Combine(target, "start-whale-overlay.cmd"),
-                WorkingDirectory = target,
-                UseShellExecute = true,
-                WindowStyle = ProcessWindowStyle.Hidden,
-            });
-            Console.WriteLine("Installed to " + target);
+            File.WriteAllText(Path.Combine(target, "install.path"), target + Environment.NewLine, Encoding.UTF8);
+            string tray = Path.Combine(target, "ErgouziWhaleWidget.exe");
+            if (File.Exists(tray)) Process.Start(new ProcessStartInfo { FileName = tray, WorkingDirectory = target, UseShellExecute = true, WindowStyle = ProcessWindowStyle.Hidden });
+            MessageBox.Show("余额挂件安装完成。\n安装位置：" + target, "安装完成", MessageBoxButtons.OK, MessageBoxIcon.Information);
             return 0;
         }
         catch (Exception error)
         {
-            Console.Error.WriteLine(error.Message);
+            MessageBox.Show(error.Message, "安装失败", MessageBoxButtons.OK, MessageBoxIcon.Error);
             return 1;
         }
     }

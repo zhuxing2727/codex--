@@ -7,13 +7,18 @@ import http from 'node:http'
 import crypto from 'node:crypto'
 import { spawnSync } from 'node:child_process'
 import { pathToFileURL } from 'node:url'
+import { CONFIG, CONFIG_DIR as DEFAULT_CONFIG_DIR, endpoint } from './ergouzi-config.mjs'
 
-const BASE_URL = process.env.ERGOUZI_BASE_URL || 'https://ergouzi.life'
-const PORT = Number(process.env.ERGOUZI_AGENT_PORT || 17891)
-const QUOTA_PER_UNIT = Number(process.env.ERGOUZI_QUOTA_PER_UNIT || 500000)
-const CONFIG_DIR = process.env.ERGOUZI_AGENT_HOME || path.join(process.env.APPDATA || os.homedir(), 'ergouzi-account-agent')
+const BASE_URL = CONFIG.baseUrl
+const PORT = CONFIG.agentPort
+const BIND_HOST = CONFIG.bindHost
+const QUOTA_PER_UNIT = CONFIG.quotaPerUnit
+const CONFIG_DIR = DEFAULT_CONFIG_DIR
 const CONFIG_FILE = path.join(CONFIG_DIR, 'config.json')
+const SUMMARY_CACHE_FILE = path.join(CONFIG_DIR, 'summary-cache.json')
 const BRIDGE_SECRET_FILE = path.join(CONFIG_DIR, 'bridge.secret')
+const TOKEN_SYNC_URL = process.env.ERGOUZI_TOKEN_SYNC_URL || endpoint(BIND_HOST, CONFIG.tokenSyncPort)
+const TOKEN_SYNC_RELOAD_COOLDOWN_MS = CONFIG.tokenRefreshCooldownMs
 
 function ensureBridgeSecret() {
   fs.mkdirSync(CONFIG_DIR, { recursive: true })
@@ -115,31 +120,108 @@ function todayRange() {
 }
 
 let config
-async function refreshIfNeeded() {
+// Single-flight lock: all concurrent callers await the same token refresh.
+let refreshLock = null
+let lastWalletReloadAt = 0
+let todayUsageCache = null
+
+function wait(ms) {
+  return new Promise((resolve) => setTimeout(resolve, ms))
+}
+
+function authExpiredError(detail = '') {
+  const error = new Error('登录状态已过期，请在钱包页面重新登录' + (detail ? '：' + detail : ''))
+  error.code = 'AUTH_EXPIRED'
+  return error
+}
+
+async function waitForImportedToken(deadline) {
+  while (Date.now() < deadline) {
+    try {
+      const next = loadConfig()
+      if (next.accessExpiresAt > Math.floor(Date.now() / 1000) + 60) {
+        config = next
+        return true
+      }
+    } catch {}
+    await wait(CONFIG.tokenImportPollIntervalMs)
+  }
+  return false
+}
+
+async function requestWalletReload() {
+  const now = Date.now()
+  if (now - lastWalletReloadAt < TOKEN_SYNC_RELOAD_COOLDOWN_MS) {
+    return waitForImportedToken(Date.now() + CONFIG.tokenRefreshWaitMs)
+  }
+  lastWalletReloadAt = now
+  let response
+  try {
+    response = await fetch(TOKEN_SYNC_URL + '/internal/reload', {
+      method: 'POST',
+      headers: { 'X-Ergouzi-Bridge': BRIDGE_SECRET },
+      signal: AbortSignal.timeout(Math.min(CONFIG.requestTimeoutMs, 5000)),
+    })
+  } catch {
+    return false
+  }
+  const body = await response.json().catch(() => ({}))
+  if (!response.ok || !body.ok) return false
+  return waitForImportedToken(Date.now() + CONFIG.bridgeReloadWaitMs)
+}
+
+async function performTokenRefresh() {
   config ||= loadConfig()
   if (config.accessExpiresAt > Math.floor(Date.now() / 1000) + 60) return
-  if (!config.sessionId && !config.cookie) throw new Error('access token expired; run setup with session material')
+  if (!config.sessionId && !config.cookie) {
+    if (await requestWalletReload()) return
+    throw authExpiredError('钱包同步未能取得新令牌')
+  }
   const headers = { Accept: 'application/json' }
   if (config.sessionId) headers['X-Auth-Session'] = config.sessionId
   if (config.cookie) headers.Cookie = config.cookie
   const res = await fetch(BASE_URL + '/api/user/auth/refresh', { method: 'POST', headers })
   const envelope = await res.json().catch(() => ({}))
   const data = unwrap(envelope)
-  if (!res.ok || !envelope.success || !data || !data.access_token) throw new Error('Ergouzi token refresh failed (HTTP ' + res.status + ')')
-  config.accessToken = data.access_token
-  config.accessExpiresAt = Number(data.access_expires_at || 0)
-  if (data.session && data.session.sid) config.sessionId = data.session.sid
-  saveConfig(config)
+  if (res.ok && envelope.success && data && data.access_token) {
+    config.accessToken = data.access_token
+    config.accessExpiresAt = Number(data.access_expires_at || 0)
+    if (data.session && data.session.sid) config.sessionId = data.session.sid
+    saveConfig(config)
+    return
+  }
+  if (res.status !== 401) throw new Error('Ergouzi token refresh failed (HTTP ' + res.status + ')')
+  if (await requestWalletReload()) return
+  throw authExpiredError('钱包会话或令牌已失效')
+}
+
+async function refreshIfNeeded() {
+  config ||= loadConfig()
+  if (config.accessExpiresAt > Math.floor(Date.now() / 1000) + 60) return
+  if (!refreshLock) {
+    refreshLock = performTokenRefresh().finally(() => { refreshLock = null })
+  }
+  await refreshLock
 }
 
 async function api(pathname, params) {
-  await refreshIfNeeded()
-  const url = new URL(BASE_URL + pathname)
-  for (const [key, value] of Object.entries(params || {})) url.searchParams.set(key, String(value))
-  const res = await fetch(url, { headers: { Authorization: 'Bearer ' + config.accessToken, Accept: 'application/json' } })
-  const body = await res.json().catch(() => ({}))
-  if (!res.ok) throw new Error('Ergouzi API HTTP ' + res.status)
-  return unwrap(body)
+  let retried = false
+  while (true) {
+    await refreshIfNeeded()
+    const url = new URL(BASE_URL + pathname)
+    for (const [key, value] of Object.entries(params || {})) url.searchParams.set(key, String(value))
+    const res = await fetch(url, { headers: { Authorization: 'Bearer ' + config.accessToken, Accept: 'application/json' }, signal: AbortSignal.timeout(CONFIG.requestTimeoutMs) })
+    const body = await res.json().catch(() => ({}))
+    if (res.ok) return unwrap(body)
+    if (res.status === 401 && !retried) {
+      retried = true
+      config.accessExpiresAt = 0
+      await refreshIfNeeded()
+      continue
+    }
+    if (res.status === 401) throw authExpiredError('上游接口拒绝当前令牌')
+    throw new Error('Ergouzi API HTTP ' + res.status)
+  }
 }
 
 async function balance() {
@@ -157,6 +239,73 @@ async function todayUsage() {
   const range = todayRange()
   const data = await api('/api/billing/analysis/self', { start_timestamp: range.start, end_timestamp: range.end })
   return parseBilling(data, range.date)
+}
+
+function loadTodayUsageCache() {
+  if (todayUsageCache) return todayUsageCache
+  try {
+    const body = JSON.parse(fs.readFileSync(SUMMARY_CACHE_FILE, 'utf8'))
+    if (body && typeof body === 'object') todayUsageCache = body
+  } catch {}
+  return todayUsageCache
+}
+
+function rememberTodayUsage(value) {
+  const next = {
+    amount: Number(value.amount),
+    currency: String(value.currency || 'USD'),
+    date: String(value.date || todayRange().date),
+    savedAt: new Date().toISOString(),
+  }
+  if (!Number.isFinite(next.amount)) return
+  todayUsageCache = next
+  try {
+    fs.mkdirSync(CONFIG_DIR, { recursive: true })
+    fs.writeFileSync(SUMMARY_CACHE_FILE, JSON.stringify(next, null, 2), { encoding: 'utf8', mode: 0o600 })
+  } catch {}
+}
+
+function cachedTodayUsage() {
+  const cached = loadTodayUsageCache()
+  if (!cached || cached.date !== todayRange().date || !Number.isFinite(Number(cached.amount))) return null
+  return {
+    ok: true,
+    amount: Number(cached.amount),
+    currency: String(cached.currency || 'USD'),
+    date: cached.date,
+    usageStale: true,
+    usageError: '暂时使用上次成功数据',
+  }
+}
+
+async function todayUsageWithCache() {
+  try {
+    const value = await todayUsage()
+    rememberTodayUsage(value)
+    return value
+  } catch (error) {
+    // Authentication failures must remain explicit; a stale quota must not hide them.
+    if (error && error.code === 'AUTH_EXPIRED') throw error
+    const cached = cachedTodayUsage()
+    if (cached) return cached
+    throw error
+  }
+}
+
+async function summary() {
+  const currentBalance = await balance()
+  const usage = await todayUsageWithCache()
+  return {
+    ok: true,
+    totalBalance: currentBalance.totalBalance,
+    currency: currentBalance.currency,
+    todayUsage: usage.amount,
+    todayUsageCurrency: usage.currency || currentBalance.currency,
+    todayUsageDate: usage.date,
+    usageStale: usage.usageStale === true,
+    usageError: usage.usageError || '',
+    updatedAt: new Date().toISOString(),
+  }
 }
 
 export function parseBilling(data, date = todayRange().date) {
@@ -179,7 +328,7 @@ function send(res, status, body) {
 }
 
 function isAllowedBrowserOrigin(origin) {
-  return !origin || origin === 'https://ergouzi.life' || origin === 'https://www.ergouzi.life'
+  return !origin || origin === new URL(BASE_URL).origin
 }
 
 function hasBridgeSecret(req) {
@@ -241,14 +390,15 @@ function startServer() {
         if (!isAllowedBrowserOrigin(origin) || !hasBridgeSecret(req)) return send(res, 403, { ok: false, code: 'BRIDGE_DENIED' })
         return send(res, 200, await importToken(req))
       }
+      if (req.url === '/api/summary') return send(res, 200, await summary())
       if (req.url === '/api/balance') return send(res, 200, await balance())
-      if (req.url === '/api/today-usage') return send(res, 200, await todayUsage())
+      if (req.url === '/api/today-usage') return send(res, 200, await todayUsageWithCache())
       return send(res, 404, { ok: false, code: 'NOT_FOUND', error: 'not found' })
     } catch (err) {
-      send(res, 502, { ok: false, code: 'UPSTREAM', error: String(err.message || err) })
+      send(res, 502, { ok: false, code: err.code || 'UPSTREAM', error: String(err.message || err) })
     }
   })
-  server.listen(PORT, '127.0.0.1', () => console.log('Ergouzi account agent listening on http://127.0.0.1:' + PORT))
+  server.listen(PORT, BIND_HOST, () => console.log('Ergouzi account agent listening on ' + endpoint(BIND_HOST, PORT)))
 }
 
 async function setup() {

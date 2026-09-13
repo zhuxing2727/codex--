@@ -1,7 +1,7 @@
 /* CC Switch Usage Query backed by the local Ergouzi account agent. */
 ({
   request: {
-    url: 'http://127.0.0.1:17891/api/balance',
+    url: 'http://127.0.0.1:17891/api/summary',
     method: 'GET',
     headers: {
       Authorization: 'Bearer {{apiKey}}',
@@ -17,7 +17,7 @@
       else break
     }
     if (!data || data.ok !== true) {
-      return { isValid: false, invalidMessage: String(data && (data.error || data.message) || 'Local Ergouzi account agent is unavailable') }
+      return { isValid: false, invalidMessage: data && data.code === 'AUTH_EXPIRED' ? '请重新登录' : String(data && (data.error || data.message) || 'Local Ergouzi account agent is unavailable') }
     }
     var remaining = Number(data.totalBalance)
     if (!isFinite(remaining)) {
@@ -33,7 +33,7 @@
       used: used,
       total: remaining + used,
       unit: unit,
-      extra: 'Local account agent'
+      extra: data.usageStale ? 'Local account agent; today usage cached' : 'Local account agent'
     }
   }
 })

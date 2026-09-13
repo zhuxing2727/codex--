@@ -1,5 +1,5 @@
 ﻿param(
-  [int]$Port = 17891,
+  [int]$Port = 0,
   [switch]$NoTopmost
 )
 
@@ -9,10 +9,22 @@ Add-Type -AssemblyName WindowsBase
 
 $ErrorActionPreference = 'Stop'
 $script:RootDir = $PSScriptRoot
+$script:Config = $null
+$configPath = Join-Path $script:RootDir 'ergouzi.config.json'
+if (Test-Path -LiteralPath $configPath) {
+  try { $script:Config = Get-Content -Raw -LiteralPath $configPath | ConvertFrom-Json } catch { $script:Config = $null }
+}
+$bindHost = if ($script:Config -and $script:Config.bindHost) { [string]$script:Config.bindHost } else { '127.0.0.1' }
+$configuredPort = if ($script:Config -and $script:Config.agentPort) { [int]$script:Config.agentPort } else { 17891 }
+if ($Port -le 0) { $Port = $configuredPort }
+$agentEndpoint = 'http://' + $bindHost + ':' + $Port
+$requestTimeoutMs = if ($script:Config -and $script:Config.requestTimeoutMs) { [double]$script:Config.requestTimeoutMs } else { 25000 }
+$requestTimeoutSec = [math]::Max(1, [int][math]::Ceiling($requestTimeoutMs / 1000))
 $script:BaseSize = 320
 $script:Scale = 1.0
-$script:AgentUrl = "http://127.0.0.1:$Port"
-$script:StateDir = Join-Path ($env:APPDATA) 'DeepSeekWhaleOverlay'
+$script:AgentUrl = $agentEndpoint
+$stateName = if ($script:Config -and $script:Config.overlayStateName) { [string]$script:Config.overlayStateName } else { 'DeepSeekWhaleOverlay' }
+$script:StateDir = Join-Path ($env:APPDATA) $stateName
 $script:StateFile = Join-Path $script:StateDir 'state.json'
 $script:RefreshJob = $null
 $script:Drag = $null
@@ -45,9 +57,24 @@ $script:Colors = [pscustomobject]@{
 $script:LastBalance = $null
 $script:LastCurrency = 'USD'
 $script:LastUsage = $null
+$script:LastUsageCurrency = 'USD'
+$script:LastUsageError = ''
+$script:LastRefreshCode = ''
+$script:LastRefreshError = ''
+$script:RefreshPending = $false
+$script:BubblePersistent = $true
 
 $mutex = New-Object Threading.Mutex($false, 'Local\DeepSeekBalanceWhaleOverlay')
-if (-not $mutex.WaitOne(0, $false)) { exit 0 }
+$script:PingEventName = 'Local\DeepSeekBalanceWhaleOverlayPing'
+if (-not $mutex.WaitOne(0, $false)) {
+  try {
+    $existingPing = [System.Threading.EventWaitHandle]::OpenExisting($script:PingEventName)
+    [void]$existingPing.Set()
+    $existingPing.Dispose()
+  } catch {}
+  exit 0
+}
+$script:PingEvent = New-Object System.Threading.EventWaitHandle($false, [System.Threading.EventResetMode]::AutoReset, $script:PingEventName)
 
 function Read-State {
   if (-not (Test-Path -LiteralPath $script:StateFile)) { return $null }
@@ -134,8 +161,22 @@ function Voice-FontSize([string]$text) {
   return 11
 }
 
-function Show-BalanceDisplay {
-  $script:VoiceBubbleVisible = $false
+function Get-BalanceHint {
+  if ($script:LastBalance -eq $null) {
+    if ($script:LastRefreshCode -eq 'AUTH_EXPIRED') { return '请重新登录' }
+    if ($script:LastRefreshError) { return $script:LastRefreshError }
+    return '加载中...'
+  }
+  if ($script:LastUsage -ne $null) {
+    $usageText = Format-Money $script:LastUsage $script:LastUsageCurrency
+    if ($script:LastUsageError) { return '今日已用 ' + $usageText + '（缓存）' }
+    return '今日已用 ' + $usageText
+  }
+  if ($script:LastUsageError) { return '今日已用 -- · ' + $script:LastUsageError }
+  return '今日已用 --'
+}
+
+function Render-BalanceDisplay {
   $script:LabelText.Text = 'ergouzi余额'
   $script:LabelText.FontSize = 18
   $script:LabelText.Foreground = New-Brush $script:Colors.Muted
@@ -147,13 +188,18 @@ function Show-BalanceDisplay {
   $script:AmountText.Text = if ($script:LastBalance -ne $null) { Format-Money $script:LastBalance $script:LastCurrency } else { '...' }
   $script:HintText.FontSize = 13
   $script:HintText.Foreground = New-Brush $script:Colors.Muted
-  $script:HintText.Text = if ($script:LastBalance -ne $null) { '点击播放角色语音' } else { '加载中...' }
+  $script:HintText.Text = Get-BalanceHint
+}
+
+function Show-BalanceDisplay {
+  $script:VoiceBubbleVisible = $false
+  Render-BalanceDisplay
 }
 
 function Show-VoiceBubble([object]$voice) {
   if (-not $voice) { return }
   $script:VoiceBubbleVisible = $true
-  $script:Bubble.Visibility = 'Visible'
+  Set-BubbleVisibility 'Visible'
   $script:LabelText.Text = "$($voice.Language)语音"
   $script:LabelText.FontSize = 16
   $script:LabelText.Foreground = New-Brush $voice.Color
@@ -167,9 +213,10 @@ function Show-VoiceBubble([object]$voice) {
   $script:HintText.FontSize = 12
   $script:HintText.Foreground = New-Brush $script:Colors.Muted
   if ($script:BubbleTimer) { $script:BubbleTimer.Stop() }
+  if ($script:BubblePersistent) { return }
   $script:BubbleTimer = New-Object Windows.Threading.DispatcherTimer
   $script:BubbleTimer.Interval = [TimeSpan]::FromSeconds(20)
-  $script:BubbleTimer.Add_Tick({ $script:Bubble.Visibility = 'Collapsed'; $script:VoiceBubbleVisible = $false; $script:BubbleTimer.Stop() })
+  $script:BubbleTimer.Add_Tick({ Set-BubbleVisibility 'Collapsed'; $script:VoiceBubbleVisible = $false; Show-BalanceDisplay; $script:BubbleTimer.Stop() })
   $script:BubbleTimer.Start()
 }
 
@@ -224,18 +271,28 @@ function Set-Text {
   $script:HintText.Text = $Hint
 }
 
+function Set-BubbleVisibility([string]$visibility) {
+  # The bubble is made from separate WPF elements. Keep every piece in one state.
+  # BubblePersistent intentionally keeps the complete bubble visible at all times.
+  $actual = if ($script:BubblePersistent) { 'Visible' } else { $visibility }
+  foreach ($element in @($script:Bubble, $script:BubbleTail, $script:BubbleDot1, $script:BubbleDot2, $script:BubblePanel)) {
+    if ($element) { $element.Visibility = $actual }
+  }
+}
+
 function Current-Amount {
   if ($script:LastBalance -ne $null) { return (Format-Money $script:LastBalance $script:LastCurrency) }
   return '--'
 }
 
 function Show-Bubble {
-  $script:Bubble.Visibility = 'Visible'
+  Set-BubbleVisibility 'Visible'
   Show-BalanceDisplay
   if ($script:BubbleTimer) { $script:BubbleTimer.Stop() }
+  if ($script:BubblePersistent) { return }
   $script:BubbleTimer = New-Object Windows.Threading.DispatcherTimer
   $script:BubbleTimer.Interval = [TimeSpan]::FromSeconds(5)
-  $script:BubbleTimer.Add_Tick({ $script:Bubble.Visibility = 'Collapsed'; $script:VoiceBubbleVisible = $false; $script:BubbleTimer.Stop() })
+  $script:BubbleTimer.Add_Tick({ Set-BubbleVisibility 'Collapsed'; $script:VoiceBubbleVisible = $false; $script:BubbleTimer.Stop() })
   $script:BubbleTimer.Start()
 }
 
@@ -265,13 +322,18 @@ function Play-NextVoice([switch]$KeepBalanceDisplay) {
 function Handle-UserClick {
   if ($script:Bubble.Visibility -ne 'Visible') {
     Show-Bubble
-    Start-Refresh
     Play-NextVoice -KeepBalanceDisplay
   } elseif ($script:VoiceBubbleVisible) {
     Show-Bubble
+    # Returning to the balance view is still a user voice action. Keep the
+    # balance values visible while playing the next selected voice.
+    Play-NextVoice -KeepBalanceDisplay
   } else {
     Play-NextVoice
   }
+  # Every completed click requests a refresh. Start-Refresh coalesces clicks
+  # while one request is running and schedules the final click as a follow-up.
+  Start-Refresh
 }
 
 function Apply-Scale([double]$value) {
@@ -305,36 +367,66 @@ function Snap-Window {
 }
 
 function Start-Refresh {
-  if ($script:RefreshJob) { return }
+  if ($script:RefreshJob) {
+    # Merge rapid clicks into one follow-up request; never drop the last click.
+    $script:RefreshPending = $true
+    return
+  }
   if (-not $script:VoiceBubbleVisible) {
-    $amount = if ($script:LastBalance -ne $null) { Format-Money $script:LastBalance $script:LastCurrency } else { '...' }
-    Set-Text $amount '加载中...'
+    if ($script:LastBalance -ne $null -and $script:LastUsage -ne $null) {
+      # Keep the last known usage visible while the merged refresh is in flight.
+      Render-BalanceDisplay
+    } else {
+      $amount = if ($script:LastBalance -ne $null) { Format-Money $script:LastBalance $script:LastCurrency } else { '...' }
+      Set-Text $amount '加载中...'
+    }
   }
   $script:RefreshJob = Start-Job -ScriptBlock {
-    param($url)
+    param($url, $timeoutSec, $endpoint)
+    function Invoke-JsonEndpoint([string]$target) {
+      try {
+        $response = Invoke-WebRequest -Uri $target -Method Get -TimeoutSec $timeoutSec -UseBasicParsing
+        $body = $response.Content | ConvertFrom-Json
+        if ($body) { return $body }
+        return [pscustomobject]@{ ok = $false; code = 'EMPTY_RESPONSE'; error = '账户代理返回空响应' }
+      } catch {
+        $response = $_.Exception.Response
+        if ($response) {
+          try {
+            $reader = New-Object IO.StreamReader($response.GetResponseStream())
+            $raw = $reader.ReadToEnd()
+            $reader.Dispose()
+            $body = $raw | ConvertFrom-Json
+            if ($body) { return $body }
+          } catch {}
+        }
+        return [pscustomobject]@{ ok = $false; code = 'AGENT_UNAVAILABLE'; error = [string]$_.Exception.Message }
+      }
+    }
     try {
       try {
-        $health = Invoke-RestMethod -Uri ($url + '/health') -Method Get -TimeoutSec 5
+        $health = Invoke-JsonEndpoint ($url + '/health')
         if (-not $health.ok) { throw [Exception]::new('本地账户代理健康检查失败') }
       } catch {
-        return [pscustomobject]@{ ok = $false; code = 'AGENT_UNAVAILABLE'; error = '无法连接本地账户代理 127.0.0.1:17891' }
+        return [pscustomobject]@{ ok = $false; code = 'AGENT_UNAVAILABLE'; error = "无法连接本地账户代理 $endpoint" }
       }
-      $balance = Invoke-RestMethod -Uri ($url + '/api/balance') -Method Get -TimeoutSec 25
-      if (-not $balance.ok) { throw [Exception]::new([string]$balance.error) }
-      $usage = $null
-      try { $usage = Invoke-RestMethod -Uri ($url + '/api/today-usage') -Method Get -TimeoutSec 25 } catch {}
+      $summary = Invoke-JsonEndpoint ($url + '/api/summary')
+      if (-not $summary.ok) {
+        return [pscustomobject]@{ ok = $false; code = [string]$summary.code; error = [string]$summary.error }
+      }
       [pscustomobject]@{
         ok = $true
-        balance = [double]$balance.totalBalance
-        currency = [string]$balance.currency
-        usage = if ($usage -and $usage.ok) { [double]$usage.amount } else { $null }
-        usageCurrency = if ($usage -and $usage.currency) { [string]$usage.currency } else { 'USD' }
-        usageError = if ($usage -and -not $usage.ok) { [string]$usage.error } else { '' }
+        balance = [double]$summary.totalBalance
+        currency = [string]$summary.currency
+        usage = if ($null -ne $summary.todayUsage) { [double]$summary.todayUsage } else { $null }
+        usageCurrency = if ($summary.todayUsageCurrency) { [string]$summary.todayUsageCurrency } else { 'USD' }
+        usageStale = [bool]$summary.usageStale
+        usageError = if ($summary.usageError) { [string]$summary.usageError } else { '' }
       }
     } catch {
       [pscustomobject]@{ ok = $false; code = 'UPSTREAM'; error = '本地代理已连接，但 Ergouzi 上游请求失败: ' + [string]$_.Exception.Message }
     }
-  } -ArgumentList $script:AgentUrl
+  } -ArgumentList $script:AgentUrl, $requestTimeoutSec, $script:AgentUrl
 }
 
 function Complete-Refresh {
@@ -344,18 +436,37 @@ function Complete-Refresh {
   Remove-Job $script:RefreshJob -Force -ErrorAction SilentlyContinue
   $script:RefreshJob = $null
   if ($result -and $result.ok) {
+    $script:LastRefreshCode = ''
+    $script:LastRefreshError = ''
     $script:LastBalance = $result.balance
     $script:LastCurrency = $result.currency
-    $script:LastUsage = $result.usage
-    if (-not $script:VoiceBubbleVisible) {
-      $usageText = if ($null -eq $script:LastUsage) { '--' } else { Format-Money $script:LastUsage $result.usageCurrency }
-      Set-Text (Format-Money $script:LastBalance $script:LastCurrency) ('今日已用 ' + $usageText)
+    if ($null -ne $result.usage) {
+      $script:LastUsage = $result.usage
+      $script:LastUsageCurrency = if ($result.usageCurrency) { $result.usageCurrency } else { 'USD' }
+      $script:LastUsageError = if ($result.usageStale) { if ($result.usageError) { [string]$result.usageError } else { '暂时使用上次成功数据' } } else { '' }
+    } else {
+      $script:LastUsageError = if ($result.usageError) { [string]$result.usageError } else { '今日已用暂时不可用' }
     }
+    if (-not $script:VoiceBubbleVisible) { Render-BalanceDisplay }
   } else {
+    $script:LastRefreshCode = if ($result -and $result.code) { [string]$result.code } else { 'UPSTREAM' }
+    $script:LastRefreshError = if ($result -and $result.error) { [string]$result.error } else { '账户代理请求失败' }
     if (-not $script:VoiceBubbleVisible) {
-      $prefix = if ($result.code -eq 'AGENT_UNAVAILABLE') { '' } else { '账户代理错误: ' }
-      Set-Text (Current-Amount) ($prefix + [string]$result.error)
+      if ($script:LastRefreshCode -eq 'AUTH_EXPIRED') {
+        Set-Text (Current-Amount) '请重新登录'
+      } elseif ($script:LastBalance -ne $null -and $script:LastUsage -ne $null) {
+        # A transport/upstream blip must not erase a known usage value.
+        if (-not $script:LastUsageError) { $script:LastUsageError = '暂时使用上次成功数据' }
+        Render-BalanceDisplay
+      } else {
+        $hint = if ($script:LastRefreshCode -eq 'AGENT_UNAVAILABLE') { $script:LastRefreshError } else { '账户代理请求失败: ' + $script:LastRefreshError }
+        Set-Text (Current-Amount) $hint
+      }
     }
+  }
+  if ($script:RefreshPending) {
+    $script:RefreshPending = $false
+    Start-Refresh
   }
 }
 
@@ -385,15 +496,19 @@ $bubble.Width = 250; $bubble.Height = 162; $bubble.Fill = New-Brush $script:Colo
 [Windows.Controls.Canvas]::SetLeft($bubble, 12); [Windows.Controls.Canvas]::SetTop($bubble, 8); $stage.Children.Add($bubble) | Out-Null
 
 $tail = New-Object Windows.Shapes.Polygon
+$script:BubbleTail = $tail
 $tail.Points = '64,154 122,162 83,201'; $tail.Fill = New-Brush $script:Colors.Bubble; $tail.Stroke = New-Brush $script:Colors.Outline; $tail.StrokeThickness = 5; $tail.StrokeLineJoin = 'Round'
 $stage.Children.Add($tail) | Out-Null
 
 $dot1 = New-Object Windows.Shapes.Ellipse; $dot1.Width = 22; $dot1.Height = 16; $dot1.Fill = New-Brush $script:Colors.Bubble; $dot1.Stroke = New-Brush $script:Colors.Outline; $dot1.StrokeThickness = 4
+$script:BubbleDot1 = $dot1
 [Windows.Controls.Canvas]::SetLeft($dot1, 76); [Windows.Controls.Canvas]::SetTop($dot1, 207); $stage.Children.Add($dot1) | Out-Null
 $dot2 = New-Object Windows.Shapes.Ellipse; $dot2.Width = 14; $dot2.Height = 11; $dot2.Fill = New-Brush $script:Colors.Bubble; $dot2.Stroke = New-Brush $script:Colors.Outline; $dot2.StrokeThickness = 3
+$script:BubbleDot2 = $dot2
 [Windows.Controls.Canvas]::SetLeft($dot2, 108); [Windows.Controls.Canvas]::SetTop($dot2, 232); $stage.Children.Add($dot2) | Out-Null
 
 $bubblePanel = New-Object Windows.Controls.StackPanel
+$script:BubblePanel = $bubblePanel
 $bubblePanel.Width = 210; $bubblePanel.HorizontalAlignment = 'Center'
 [Windows.Controls.Canvas]::SetLeft($bubblePanel, 32); [Windows.Controls.Canvas]::SetTop($bubblePanel, 37); $stage.Children.Add($bubblePanel) | Out-Null
 foreach ($kind in @('Label','Amount','Hint')) {
@@ -457,7 +572,7 @@ $menuButton = New-Object Windows.Controls.Button; $menuButton.Content = '⋮'; $
 [void]$menuButton.Add_MouseLeftButtonDown({ $_.Handled = $true })
 [Windows.Controls.Canvas]::SetLeft($menuButton, 238); [Windows.Controls.Canvas]::SetTop($menuButton, 32); $stage.Children.Add($menuButton) | Out-Null
 
-$script:Bubble.Visibility = 'Collapsed'
+Set-BubbleVisibility 'Visible'
 $stage.Add_MouseLeftButtonDown({
   $script:Drag = [pscustomobject]@{ x = [Windows.Input.Mouse]::GetPosition($null).X; y = [Windows.Input.Mouse]::GetPosition($null).Y; left = $window.Left; top = $window.Top; moved = $false }
   $stage.CaptureMouse()
@@ -474,7 +589,7 @@ $stage.Add_MouseLeftButtonUp({
   if (-not $drag.moved) { Handle-UserClick }
   else { Snap-Window }
 })
-$bubble.Add_MouseLeftButtonDown({ $_.Handled = $true; if ($script:VoiceBubbleVisible) { Show-Bubble } else { Play-NextVoice } })
+$bubble.Add_MouseLeftButtonDown({ $_.Handled = $true; Handle-UserClick })
 
 $state = Read-State
 if ($state) {
@@ -508,10 +623,33 @@ $window.Add_Closed({
   Stop-VoicePlayback
   foreach ($player in $script:Players) { try { $player.Close() } catch {} }
   Save-State
+  if ($script:PingEvent) { try { $script:PingEvent.Dispose() } catch {} }
   $mutex.ReleaseMutex(); $mutex.Dispose()
 })
 
-$poll = New-Object Windows.Threading.DispatcherTimer; $poll.Interval = [TimeSpan]::FromMilliseconds(250); $poll.Add_Tick({ Complete-Refresh }); $poll.Start()
+function Invoke-BringToFront {
+  if (-not $script:Window) { return }
+  try {
+    $script:Window.Show()
+    $script:Window.Topmost = $true
+    # Preserve the user's current position when a second shortcut click wakes
+    # the existing instance. Clamp it only when the saved monitor is gone.
+    $currentPosition = [pscustomobject]@{
+      left = $script:Window.Left
+      top = $script:Window.Top
+    }
+    Set-WindowPosition $currentPosition ([Windows.SystemParameters]::WorkArea)
+    [void]$script:Window.Activate()
+    if ($NoTopmost) { $script:Window.Topmost = $false }
+    Show-Bubble
+    Start-Refresh
+  } catch {}
+}
+
+$poll = New-Object Windows.Threading.DispatcherTimer; $poll.Interval = [TimeSpan]::FromMilliseconds(250); $poll.Add_Tick({
+  Complete-Refresh
+  if ($script:PingEvent -and $script:PingEvent.WaitOne(0)) { Invoke-BringToFront }
+}); $poll.Start()
 $refresh = New-Object Windows.Threading.DispatcherTimer; $refresh.Interval = [TimeSpan]::FromMinutes(1); $refresh.Add_Tick({ Start-Refresh }); $refresh.Start()
 $window.Show()
 Show-Bubble

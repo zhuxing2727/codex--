@@ -1,0 +1,33 @@
+{
+  "productName": "ErgouziWhaleWidget",
+  "version": "0.2.11",
+  "githubRepo": "zhuxing2727/codex--",
+  "githubReleasesUrl": "https://github.com/zhuxing2727/codex--/releases",
+  "baseUrl": "https://ergouzi.life",
+  "bindHost": "127.0.0.1",
+  "agentPort": 17891,
+  "tokenSyncPort": 17892,
+  "cdpPort": 17929,
+  "quotaPerUnit": 500000,
+  "walletPath": "/wallet",
+  "agentHomeName": "ergouzi-account-agent",
+  "overlayStateName": "DeepSeekWhaleOverlay",
+  "tokenRefreshCooldownMs": 60000,
+  "walletReloadIntervalMs": 180000,
+  "storageScanIntervalMs": 5000,
+  "requestTimeoutMs": 25000,
+  "cdpTimeoutMs": 15000,
+  "bridgeReloadWaitMs": 5000,
+  "walletProfileName": "wallet-browser",
+  "trayMonitorIntervalMs": 5000,
+  "tokenRetryIntervalMs": 5000,
+  "cdpPollIntervalMs": 250,
+  "pageReloadWaitMs": 1500,
+  "walletOpenWaitMs": 500,
+  "cdpProbeTimeoutMs": 500,
+  "tokenImportPollIntervalMs": 500,
+  "tokenRefreshWaitMs": 1500
+  ,"balanceTtlMs": 25000
+  ,"widgetRefreshMs": 60000
+  ,"widgetBubbleMs": 5000
+}

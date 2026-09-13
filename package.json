@@ -1,6 +1,6 @@
 {
   "name": "dsh-whale-widget",
-  "version": "0.2.10",
+  "version": "0.2.11",
   "description": "Ergouzi 本地代理版小鲸鱼余额挂件，适用于 CC Switch/Codex",
   "keywords": [
     "dsh",
@@ -20,12 +20,16 @@
     "ccswitch-ergouzi-agent-usage-query.js",
     "ergouzi-account-agent.mjs",
     "ergouzi-wallet-token-sync.mjs",
+    "ergouzi.config.json",
+    "ergouzi-config.mjs",
     "start-wallet-token-sync.cmd",
     "start-ergouzi-agent.cmd",
     "whale-overlay.ps1",
     "start-whale-overlay.cmd",
     "tools/build-installer.ps1",
-    "tools/InstallerBootstrap.cs"
+    "tools/InstallerBootstrap.cs",
+    "tools/ErgouziTrayHost.cs",
+    "tools/Uninstaller.cs"
   ],
   "repository": {
     "type": "git",

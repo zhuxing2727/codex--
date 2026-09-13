@@ -404,8 +404,6 @@ var state = {
   message: ''
 }
 var busy = false
-var pendingManualRefresh = false
-var lastKnownUsage = null
 var settleTimer = null
 var animDelayTimer = null
 var drag = null
@@ -680,10 +678,7 @@ function settle() {
   express()
 }
 function refresh(manual) {
-  if (busy) {
-    if (manual) pendingManualRefresh = true
-    return
-  }
+  if (busy) return
   busy = true
   if (animDelayTimer) { clearTimeout(animDelayTimer); animDelayTimer = null }
   if (manual || state.balance === null) { state.status = 'loading'; render() }
@@ -704,8 +699,7 @@ function refresh(manual) {
         state.balance = nb
         state.currency = nc
         state.message = ''
-        if (data.todayUsage !== undefined && data.todayUsage !== null) lastKnownUsage = data.todayUsage
-        state.todayUsage = data.todayUsage !== undefined && data.todayUsage !== null ? data.todayUsage : lastKnownUsage
+        state.todayUsage = data.todayUsage !== undefined ? data.todayUsage : null
         state.usageError = data.usageError || ''
         state.isPeak = !!data.isPeak
         if (changed && !currencyChanged) {
@@ -735,9 +729,7 @@ function refresh(manual) {
         }
       } else {
         state.status = 'error'
-        state.message = data && data.code === 'AUTH_EXPIRED'
-          ? '请重新登录'
-          : ((data && data.error) ? String(data.error) : '获取失败')
+        state.message = (data && data.error) ? String(data.error) : '获取失败'
         render()
       }
     })
@@ -749,10 +741,6 @@ function refresh(manual) {
     .finally(function () {
       busy = false
       if (timer) clearTimeout(timer)
-      if (pendingManualRefresh) {
-        pendingManualRefresh = false
-        setTimeout(function () { refresh(true) }, 0)
-      }
     })
 }
 var soundOn = true
@@ -1294,7 +1282,6 @@ const inject = ['webServer', 'credentials']
 function apply(ctx) {
     let imageBytes = null
     let balanceCache = null
-    let usageCache = null
     let balanceInFlight = null
     let gifBytes = null
     const disposers = []
@@ -1332,8 +1319,7 @@ function apply(ctx) {
         const res = await fetch(ERGOUZI_AGENT_URL + pathname, { signal: AbortSignal.timeout(FETCH_TIMEOUT_MS) })
         const data = await res.json()
         if (!res.ok || !data || data.ok === false) {
-          const code = data && data.code ? data.code : 'HTTP'
-          return { ok: false, code: code, error: code === 'AUTH_EXPIRED' ? '请重新登录' : (data && data.error ? data.error : '账户代理请求失败'), transient: res.status >= 500 }
+          return { ok: false, code: data && data.code ? data.code : 'HTTP', error: data && data.error ? data.error : '账户代理请求失败', transient: res.status >= 500 }
         }
         return data
       } catch (err) {
@@ -1347,14 +1333,8 @@ function apply(ctx) {
 
     async function fetchUsage() {
       const data = await fetchAgent('/api/today-usage')
-      if (data.ok && isFinite(Number(data.amount))) {
-        return { amount: Number(data.amount), currency: data.currency || 'USD', date: data.date || todayKey() }
-      }
+      if (data.ok && isFinite(Number(data.amount))) return { amount: Number(data.amount), currency: data.currency || 'USD' }
       return { error: data.error || 'no usage' }
-    }
-
-    async function fetchSummary() {
-      return fetchAgent('/api/summary')
     }
 
     function computeTodayUsage(data) {
@@ -1454,29 +1434,15 @@ function apply(ctx) {
     }
 
     async function getBalancePayload() {
-      const payload = await fetchSummary()
+      const payload = await fetchBalance()
       if (!payload.ok) return payload
       const full = { ...payload }
       full.isPeak = isPeakTime(Math.floor(Date.now() / 1000))
-      if (payload.todayUsage !== undefined && payload.todayUsage !== null) {
-        if (!payload.usageStale) {
-          usageCache = {
-            amount: Number(payload.todayUsage),
-            currency: payload.todayUsageCurrency || payload.currency || 'USD',
-            date: payload.todayUsageDate || todayKey(),
-          }
-        }
+      const u = await fetchUsage()
+      if (u && u.amount !== undefined) {
+        full.todayUsage = u.amount
+        full.currency = u.currency || 'USD'
         full.usageMode = 'billing'
-        full.usageError = payload.usageStale
-          ? (payload.usageError || '暂时使用上次成功数据')
-          : ''
-        return full
-      }
-      if (usageCache && usageCache.date === todayKey()) {
-        full.todayUsage = usageCache.amount
-        full.usageMode = 'billing'
-        full.usageStale = true
-        full.usageError = '暂时使用上次成功数据'
         return full
       }
       full.todayUsage = null
@@ -1500,15 +1466,9 @@ function apply(ctx) {
             balanceCache = { at: now, payload }
             return payload
           }
-          if (payload.code === 'AUTH_EXPIRED') return payload
           if (payload.transient && balanceCache) {
             // transient network/API blip: keep serving the last known balance
-            return {
-              ...balanceCache.payload,
-              stale: true,
-              error: payload.error,
-              usageError: payload.code === 'AUTH_EXPIRED' ? '登录已过期，请重新登录' : balanceCache.payload.usageError,
-            }
+            return { ...balanceCache.payload, stale: true, error: payload.error }
           }
           if (!payload.transient) console.error('[whale-balance]', payload.code, payload.error)
           return payload

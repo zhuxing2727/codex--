@@ -1,0 +1,32 @@
+name: Build Windows installer assets
+
+on:
+  release:
+    types: [published]
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: windows-latest
+    steps:
+      - name: Checkout release tag
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.release.tag_name }}
+          fetch-depth: 1
+
+      - name: Build installer
+        shell: powershell
+        run: .\tools\build-installer.ps1
+
+      - name: Upload installer assets
+        shell: powershell
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          gh release upload "${{ github.event.release.tag_name }}" `
+            "dist\ErgouziWhaleWidget-Setup.exe" `
+            "dist\ErgouziWhaleWidget-Portable.zip" `
+            --clobber

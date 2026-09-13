@@ -2,20 +2,22 @@ import fs from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
 import crypto from 'node:crypto'
+import http from 'node:http'
 import { spawn } from 'node:child_process'
 import { pathToFileURL } from 'node:url'
+import { CONFIG, CONFIG_DIR, WALLET_PROFILE_DIR, endpoint, walletUrl } from './ergouzi-config.mjs'
 
-const BASE_URL = process.env.ERGOUZI_BASE_URL || 'https://ergouzi.life'
-const WALLET_URL = process.env.ERGOUZI_WALLET_URL || new URL('/wallet', BASE_URL).href
-const AGENT_URL = process.env.ERGOUZI_AGENT_URL || 'http://127.0.0.1:17891'
-const CDP_PORT = Number(process.env.ERGOUZI_CDP_PORT || 17929)
-const CDP_BASE = 'http://127.0.0.1:' + CDP_PORT
-const CONFIG_DIR = process.env.ERGOUZI_AGENT_HOME || path.join(process.env.APPDATA || os.homedir(), 'ergouzi-account-agent')
+const BASE_URL = CONFIG.baseUrl
+const WALLET_URL = process.env.ERGOUZI_WALLET_URL || walletUrl()
+const AGENT_URL = process.env.ERGOUZI_AGENT_URL || endpoint(CONFIG.bindHost, CONFIG.agentPort)
+const CDP_PORT = CONFIG.cdpPort
+const CDP_BASE = endpoint(CONFIG.bindHost, CDP_PORT)
+const CONTROL_PORT = CONFIG.tokenSyncPort
 const BRIDGE_SECRET_FILE = path.join(CONFIG_DIR, 'bridge.secret')
-const PROFILE_DIR = process.env.ERGOUZI_WALLET_PROFILE || path.join(CONFIG_DIR, 'wallet-browser')
+const PROFILE_DIR = WALLET_PROFILE_DIR
 const LOCK_FILE = path.join(CONFIG_DIR, 'wallet-token-sync.lock')
-const RELOAD_INTERVAL_MS = Number(process.env.ERGOUZI_WALLET_RELOAD_MS || 180000)
-const STORAGE_SCAN_INTERVAL_MS = 5000
+const RELOAD_INTERVAL_MS = CONFIG.walletReloadIntervalMs
+const STORAGE_SCAN_INTERVAL_MS = CONFIG.storageScanIntervalMs
 
 function sleep(ms) {
   return new Promise((resolve) => setTimeout(resolve, ms))
@@ -161,6 +163,20 @@ function releaseLock(fd) {
   try { fs.unlinkSync(LOCK_FILE) } catch {}
 }
 
+function bridgeMatches(req, secret) {
+  const provided = String(req.headers['x-ergouzi-bridge'] || '')
+  if (!provided || provided.length !== secret.length) return false
+  return crypto.timingSafeEqual(Buffer.from(provided), Buffer.from(secret))
+}
+
+function sendJson(res, status, body) {
+  res.writeHead(status, {
+    'Content-Type': 'application/json; charset=utf-8',
+    'Cache-Control': 'no-store',
+  })
+  res.end(JSON.stringify(body))
+}
+
 async function getJson(url) {
   const response = await fetch(url)
   if (!response.ok) throw new Error('CDP HTTP ' + response.status)
@@ -176,19 +192,19 @@ function findEdgeExecutable() {
   return candidates.find((candidate) => fs.existsSync(candidate)) || null
 }
 
-async function waitForCdp(timeoutMs = 15000) {
+async function waitForCdp(timeoutMs = CONFIG.cdpTimeoutMs) {
   const deadline = Date.now() + timeoutMs
   let lastError
   while (Date.now() < deadline) {
     try { return await getJson(CDP_BASE + '/json/version') } catch (error) { lastError = error }
-    await sleep(250)
+    await sleep(CONFIG.cdpPollIntervalMs)
   }
   throw lastError || new Error('Edge DevTools endpoint did not start')
 }
 
 async function ensureCdpBrowser() {
   try {
-    return await waitForCdp(500)
+    return await waitForCdp(CONFIG.cdpProbeTimeoutMs)
   } catch {}
 
   const edge = findEdgeExecutable()
@@ -196,7 +212,7 @@ async function ensureCdpBrowser() {
   fs.mkdirSync(PROFILE_DIR, { recursive: true })
   const args = [
     '--remote-debugging-port=' + CDP_PORT,
-    '--remote-debugging-address=127.0.0.1',
+    '--remote-debugging-address=' + CONFIG.bindHost,
     '--remote-allow-origins=*',
     '--user-data-dir=' + PROFILE_DIR,
     '--profile-directory=Default',
@@ -283,7 +299,7 @@ class CdpConnection {
       const timer = setTimeout(() => {
         this.pending.delete(id)
         reject(new Error('CDP command timed out: ' + method))
-      }, 15000)
+      }, CONFIG.cdpTimeoutMs)
       this.pending.set(id, {
         resolve: (value) => { clearTimeout(timer); resolve(value) },
         reject: (error) => { clearTimeout(timer); reject(error) },
@@ -340,6 +356,7 @@ async function postToken(secret, token, sessionId = '', cookie = '') {
     method: 'POST',
     headers: { 'Content-Type': 'application/json', 'X-Ergouzi-Bridge': secret },
     body: JSON.stringify(payload),
+    signal: AbortSignal.timeout(CONFIG.requestTimeoutMs),
   })
   const body = await response.json().catch(() => ({}))
   if (!response.ok || !body.ok) throw new Error(String(body.error || body.code || 'local agent rejected token'))
@@ -357,6 +374,8 @@ async function run() {
   let candidate = null
   let importing = false
   let stopped = false
+  let controlServer
+  let reloadInFlight = null
 
   const queueToken = (token, sessionId = latestSessionId, cookie = latestCookie) => {
     if (!token) return
@@ -376,7 +395,7 @@ async function run() {
         console.log('钱包页面令牌已自动同步到本地代理')
       } catch (error) {
         console.error('钱包令牌同步等待本地代理：' + String(error.message || error))
-        await sleep(5000)
+        await sleep(CONFIG.tokenRetryIntervalMs)
       }
     }
     importing = false
@@ -390,6 +409,25 @@ async function run() {
       queueToken(findTokenInStorage(entries))
     } catch {}
   }
+
+    const reloadPage = async () => {
+      if (!cdp || stopped) throw new Error('wallet browser is not ready')
+    if (!reloadInFlight) {
+      reloadInFlight = (async () => {
+        await cdp.send('Page.reload', { ignoreCache: false })
+        await sleep(CONFIG.pageReloadWaitMs)
+        await scan()
+      })().finally(() => { reloadInFlight = null })
+    }
+      await reloadInFlight
+    }
+
+    const openWallet = async () => {
+      if (!cdp || stopped) throw new Error('wallet browser is not ready')
+      await cdp.send('Page.navigate', { url: WALLET_URL })
+      await sleep(CONFIG.walletOpenWaitMs)
+      await scan()
+    }
 
   try {
     await ensureCdpBrowser()
@@ -430,6 +468,32 @@ async function run() {
     })
     cdp.on('Page.loadEventFired', () => { void scan() })
 
+    controlServer = http.createServer(async (req, res) => {
+      if (req.method !== 'POST' || !['/internal/reload', '/internal/open-wallet'].includes(req.url)) {
+        sendJson(res, 404, { ok: false, code: 'NOT_FOUND' })
+        return
+      }
+      if (!bridgeMatches(req, secret)) {
+        sendJson(res, 403, { ok: false, code: 'BRIDGE_DENIED' })
+        return
+      }
+      try {
+        if (req.url === '/internal/open-wallet') {
+          await openWallet()
+          sendJson(res, 200, { ok: true, code: 'WALLET_OPENED' })
+        } else {
+          await reloadPage()
+          sendJson(res, 200, { ok: true, code: 'RELOAD_COMPLETE' })
+        }
+      } catch (error) {
+        sendJson(res, 503, { ok: false, code: 'RELOAD_FAILED', error: String(error.message || error) })
+      }
+    })
+    await new Promise((resolve, reject) => {
+      controlServer.once('error', reject)
+      controlServer.listen(CONTROL_PORT, CONFIG.bindHost, resolve)
+    })
+
     if (new URL(page.url).origin !== new URL(BASE_URL).origin) {
       await cdp.send('Page.navigate', { url: WALLET_URL })
     } else {
@@ -449,6 +513,7 @@ async function run() {
     })
   } finally {
     stopped = true
+    try { controlServer?.close() } catch {}
     cdp?.close()
     releaseLock(lock)
   }
