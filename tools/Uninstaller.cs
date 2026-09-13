@@ -39,7 +39,8 @@ $targetPrefix = $target.TrimEnd('\') + '\'
 $app = [Environment]::GetFolderPath('ApplicationData')
 $agentData = Join-Path $app 'ergouzi-account-agent'
 $overlayData = Join-Path $app 'DeepSeekWhaleOverlay'
-$profileData = Join-Path $agentData 'wallet-browser'
+$profileData = Join-Path $target 'wallet-browser'
+$profileNeedle = $profileData.TrimEnd('\')
 $desktop = [Environment]::GetFolderPath('Desktop')
 $programs = Join-Path $app 'Microsoft\Windows\Start Menu\Programs\余额挂件'
 
@@ -62,6 +63,34 @@ function Stop-WidgetProcesses {
     foreach ($id in $items.Keys) { Stop-Process -Id ([int]$id) -Force -ErrorAction SilentlyContinue }
 }
 
+function Stop-ProfileEdge {
+    $all = @(Get-CimInstance Win32_Process -Filter ""Name='msedge.exe'"" -ErrorAction SilentlyContinue)
+    $matched = @{}
+    foreach ($item in $all) {
+        $commandLine = [string]$item.CommandLine
+        if ($commandLine -and $commandLine.IndexOf($profileNeedle, [StringComparison]::OrdinalIgnoreCase) -ge 0) {
+            $matched[[int]$item.ProcessId] = $true
+        }
+    }
+    if ($matched.Count -eq 0) { return }
+    $roots = @{}
+    foreach ($id in @($matched.Keys)) {
+        $current = [int]$id
+        for ($depth = 0; $depth -lt 32; $depth++) {
+            $parent = $all | Where-Object { [int]$_.ProcessId -eq $current } | Select-Object -First 1
+            if (-not $parent) { break }
+            $parentId = [int]$parent.ParentProcessId
+            if ($parentId -le 0 -or -not $matched.ContainsKey($parentId)) { $roots[$current] = $true; break }
+            $current = $parentId
+        }
+    }
+    foreach ($rootId in @($roots.Keys)) {
+        try { & taskkill.exe /PID ([int]$rootId) /T /F *> $null } catch {}
+    }
+    foreach ($id in @($matched.Keys)) { Stop-Process -Id ([int]$id) -Force -ErrorAction SilentlyContinue }
+}
+
+Stop-ProfileEdge
 Stop-WidgetProcesses
 Start-Sleep -Milliseconds 700
 Remove-Item -LiteralPath (Join-Path $desktop '余额挂件.lnk') -Force -ErrorAction SilentlyContinue
@@ -73,6 +102,7 @@ Remove-Item -LiteralPath $agentData -Recurse -Force -ErrorAction SilentlyContinu
 Remove-Item -LiteralPath $overlayData -Recurse -Force -ErrorAction SilentlyContinue
 
 for ($i = 0; $i -lt 30; $i++) {
+    Stop-ProfileEdge
     Stop-WidgetProcesses
     Get-ChildItem -LiteralPath $target -Force -Recurse -ErrorAction SilentlyContinue | ForEach-Object {
         try { $_.Attributes = $_.Attributes -band (-bnot [IO.FileAttributes]::ReadOnly) } catch {}
