@@ -4,6 +4,7 @@ using System.IO;
 using System.IO.Compression;
 using System.Linq;
 using System.Text;
+using System.Threading;
 using System.Windows.Forms;
 
 internal static class InstallerBootstrap
@@ -33,9 +34,8 @@ internal static class InstallerBootstrap
         using (var browse = new Button { Text = "浏览...", Left = 446, Top = 46, Width = 82 })
         using (var install = new Button { Text = "安装", Left = 350, Top = 92, Width = 82, DialogResult = DialogResult.OK })
         using (var cancel = new Button { Text = "取消", Left = 440, Top = 92, Width = 82, DialogResult = DialogResult.Cancel })
-        using (var dialog = new FolderBrowserDialog { Description = "选择余额挂件安装目录", SelectedPath = defaultPath, ShowNewFolderButton = true })
         {
-            browse.Click += delegate { if (dialog.ShowDialog(form) == DialogResult.OK) box.Text = dialog.SelectedPath; };
+            browse.Click += delegate { BrowseForFolder(form, box, browse, defaultPath); };
             form.Controls.AddRange(new Control[] { label, box, browse, install, cancel });
             form.AcceptButton = install;
             form.CancelButton = cancel;
@@ -43,6 +43,52 @@ internal static class InstallerBootstrap
             string target = (box.Text ?? "").Trim();
             if (target.Length == 0) throw new InvalidOperationException("安装目录不能为空。");
             return Path.GetFullPath(target);
+        }
+    }
+
+    private static void BrowseForFolder(Form owner, TextBox targetBox, Button browseButton, string initialPath)
+    {
+        // FolderBrowserDialog can block the owner when a shell extension hangs.
+        // Run it on its own STA so the installer remains repaintable/cancellable.
+        var thread = new Thread(new ThreadStart(delegate
+        {
+            string selected = null;
+            try
+            {
+                using (var dialog = new FolderBrowserDialog { Description = "选择余额挂件安装目录", SelectedPath = initialPath, ShowNewFolderButton = true })
+                {
+                    if (dialog.ShowDialog() == DialogResult.OK) selected = dialog.SelectedPath;
+                }
+            }
+            catch { }
+            if (!targetBox.IsDisposed)
+            {
+                try { owner.BeginInvoke(new Action(delegate { if (!String.IsNullOrWhiteSpace(selected) && !targetBox.IsDisposed) targetBox.Text = selected; if (!browseButton.IsDisposed) browseButton.Enabled = true; })); } catch { }
+            }
+        }));
+        browseButton.Enabled = false;
+        thread.IsBackground = true;
+        thread.SetApartmentState(ApartmentState.STA);
+        thread.Start();
+    }
+
+    private static void ValidateTarget(string target)
+    {
+        string full = Path.GetFullPath(target).TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar);
+        string root = Path.GetPathRoot(full).TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar);
+        if (String.IsNullOrEmpty(full) || String.Equals(full, root, StringComparison.OrdinalIgnoreCase)) throw new InvalidOperationException("不能将磁盘根目录作为安装目录。");
+        if (String.Equals(full, Environment.GetFolderPath(Environment.SpecialFolder.Windows), StringComparison.OrdinalIgnoreCase)) throw new InvalidOperationException("不能将 Windows 系统目录作为安装目录。");
+        if (Directory.Exists(full))
+        {
+            string tray = Path.Combine(full, "ErgouziWhaleWidget.exe");
+            string marker = Path.Combine(full, "install.path");
+            bool owned = File.Exists(tray) || File.Exists(marker);
+            bool hasFiles = Directory.EnumerateFileSystemEntries(full).Any();
+            if (hasFiles && !owned)
+            {
+                var result = MessageBox.Show("目标目录不是余额挂件目录，且已经包含文件。\n继续安装会覆盖同名文件，但不会自动删除其他文件。", "确认安装目录", MessageBoxButtons.OKCancel, MessageBoxIcon.Warning);
+                if (result != DialogResult.OK) throw new OperationCanceledException();
+            }
         }
     }
 
@@ -103,6 +149,7 @@ internal static class InstallerBootstrap
             string requested = args == null ? null : args.SkipWhile(a => !String.Equals(a, "--target", StringComparison.OrdinalIgnoreCase)).Skip(1).FirstOrDefault();
             string target = PickTarget(requested);
             if (target == null) return 0;
+            ValidateTarget(target);
             StopPreviousInstall(target);
             ExtractPayload(target);
             CreateShortcut(target);

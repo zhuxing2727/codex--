@@ -277,7 +277,11 @@ internal static class ErgouziTrayHost
                     {
                         string uninstaller = Path.Combine(root, "卸载余额挂件.exe");
                         if (File.Exists(uninstaller)) Process.Start(new ProcessStartInfo { FileName = uninstaller, Arguments = "--silent", UseShellExecute = true });
-                        Task.Run(delegate { Thread.Sleep(1800); Process.Start(new ProcessStartInfo { FileName = setup, UseShellExecute = true }); });
+                        Task.Run(delegate
+                        {
+                            for (int i = 0; i < 30 && Directory.Exists(root); i++) Thread.Sleep(500);
+                            Process.Start(new ProcessStartInfo { FileName = setup, UseShellExecute = true });
+                        });
                     }
                 }));
             }
