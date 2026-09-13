@@ -85,7 +85,9 @@ Remove-Item -LiteralPath $cleanupScript -Force -ErrorAction SilentlyContinue
 ";
             script = script.Replace("OWNER_PID", ownerPid.ToString()).Replace("TARGET", escapedTarget).Replace("CLEANUP_SCRIPT", tempScript.Replace("'", "''"));
             File.WriteAllText(tempScript, script, Encoding.UTF8);
-            Process.Start(new ProcessStartInfo { FileName = "powershell.exe", Arguments = "-NoLogo -NoProfile -WindowStyle Hidden -ExecutionPolicy Bypass -File \"" + tempScript + "\"", UseShellExecute = false, CreateNoWindow = true });
+            // The cleaner must not inherit the install directory as its current directory;
+            // Windows otherwise keeps that directory open and refuses to remove it.
+            Process.Start(new ProcessStartInfo { FileName = "powershell.exe", Arguments = "-NoLogo -NoProfile -WindowStyle Hidden -ExecutionPolicy Bypass -File \"" + tempScript + "\"", WorkingDirectory = Path.GetTempPath(), UseShellExecute = false, CreateNoWindow = true });
             return 0;
         }
         catch (Exception error) { MessageBox.Show(error.Message, "卸载失败", MessageBoxButtons.OK, MessageBoxIcon.Error); return 1; }
