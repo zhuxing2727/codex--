@@ -139,6 +139,18 @@ internal static class InstallerBootstrap
         link.WindowStyle = 1;
         link.Description = "启动余额挂件";
         link.Save();
+        string programs = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData), "Microsoft", "Windows", "Start Menu", "Programs", "余额挂件");
+        Directory.CreateDirectory(programs);
+        string uninstallShortcut = Path.Combine(programs, "卸载余额挂件.lnk");
+        string oldUninstallShortcut = Path.Combine(programs, "Uninstall-ErgouziWhaleWidget.lnk");
+        try { if (File.Exists(oldUninstallShortcut)) File.Delete(oldUninstallShortcut); } catch { }
+        dynamic uninstallLink = shell.CreateShortcut(uninstallShortcut);
+        uninstallLink.TargetPath = Path.Combine(target, "卸载余额挂件.exe");
+        uninstallLink.WorkingDirectory = target;
+        uninstallLink.IconLocation = Path.Combine(target, "assets", "balance-widget.ico") + ",0";
+        uninstallLink.WindowStyle = 1;
+        uninstallLink.Description = "卸载余额挂件";
+        uninstallLink.Save();
     }
 
     public static int Main(string[] args)
@@ -152,6 +164,7 @@ internal static class InstallerBootstrap
             ValidateTarget(target);
             StopPreviousInstall(target);
             ExtractPayload(target);
+            try { File.Delete(Path.Combine(target, "Uninstall-ErgouziWhaleWidget.exe")); } catch { }
             CreateShortcut(target);
             File.WriteAllText(Path.Combine(target, "install.path"), target + Environment.NewLine, Encoding.UTF8);
             string tray = Path.Combine(target, "ErgouziWhaleWidget.exe");

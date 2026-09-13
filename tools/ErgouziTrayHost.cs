@@ -334,7 +334,7 @@ internal static class ErgouziTrayHost
                     }
                     else
                     {
-                        string uninstaller = Path.Combine(root, "Uninstall-ErgouziWhaleWidget.exe");
+                        string uninstaller = Path.Combine(root, "卸载余额挂件.exe");
                         if (File.Exists(uninstaller)) Process.Start(new ProcessStartInfo { FileName = uninstaller, Arguments = "--silent", UseShellExecute = true });
                         Task.Run(delegate
                         {

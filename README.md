@@ -14,7 +14,7 @@
 
 ## 快速安装
 
-从仓库源码运行构建脚本即可生成 `ErgouziWhaleWidget-Setup.exe`。安装时可在窗口中选择任意目录，程序会在所选目录保存全部运行文件并创建桌面快捷方式 `余额挂件.lnk`。快捷方式使用缩小后的角色图标 `assets/balance-widget.ico`。安装目录内的 `Uninstall-ErgouziWhaleWidget.exe` 会停止组件、删除程序文件、删除快捷方式，并清理挂件状态和本地账户代理数据。卸载器文件名使用 ASCII，避免 Windows ZIP 解压时的中文文件名编码问题。
+从仓库源码运行构建脚本即可生成 `ErgouziWhaleWidget-Setup.exe`。安装时可在窗口中选择任意目录，程序会在所选目录保存全部运行文件并创建桌面快捷方式 `余额挂件.lnk`。快捷方式使用缩小后的角色图标 `assets/balance-widget.ico`。安装目录内的 `卸载余额挂件.exe` 会停止组件、删除程序文件、删除快捷方式，并清理挂件状态和本地账户代理数据；开始菜单“余额挂件”文件夹也会生成同名卸载快捷方式。旧版 `Uninstall-ErgouziWhaleWidget.exe` 不再打包。
 
 首次启动后，托盘后台会自动打开 Ergouzi 钱包页面，在页面完成登录一次即可。托盘菜单可重新打开登录页、显示挂件、重启组件、检查更新或退出后台。也可以下载 `ErgouziWhaleWidget-Portable.zip`，解压后运行 `ErgouziWhaleWidget.exe`（旧版 `start-whale-overlay.cmd` 仍兼容）。
 
