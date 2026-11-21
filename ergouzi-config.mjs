@@ -7,11 +7,12 @@ const rootDir = path.dirname(fileURLToPath(import.meta.url))
 const defaultConfigFile = path.join(rootDir, 'ergouzi.config.json')
 const configFile = process.env.ERGOUZI_CONFIG_FILE || defaultConfigFile
 const defaults = {
-  version: '0.2.20',
+  version: '0.2.21',
   githubRepo: 'zhuxing2727/codex--',
   githubReleasesUrl: 'https://github.com/zhuxing2727/codex--/releases',
   updateProxy: '',
   baseUrl: 'https://ergouzi.life',
+  walletBaseUrl: 'https://api.ergouzi.life',
   bindHost: '127.0.0.1',
   agentPort: 17891,
   tokenSyncPort: 17892,
@@ -55,6 +56,8 @@ const config = {
   ...defaults,
   ...fileValues,
   baseUrl: env.ERGOUZI_BASE_URL || fileValues.baseUrl || defaults.baseUrl,
+  walletBaseUrl: env.ERGOUZI_WALLET_BASE_URL || fileValues.walletBaseUrl || defaults.walletBaseUrl,
+  walletPath: env.ERGOUZI_WALLET_PATH || fileValues.walletPath || defaults.walletPath,
   bindHost: env.ERGOUZI_BIND_HOST || fileValues.bindHost || defaults.bindHost,
   agentPort: number(env.ERGOUZI_AGENT_PORT || fileValues.agentPort, defaults.agentPort),
   tokenSyncPort: number(env.ERGOUZI_TOKEN_SYNC_PORT || fileValues.tokenSyncPort, defaults.tokenSyncPort),
@@ -85,4 +88,4 @@ export const OVERLAY_STATE_DIR = process.env.ERGOUZI_OVERLAY_STATE_HOME || path.
 function CONFIG_DIR_NAME() { return CONFIG.agentHomeName }
 
 export function endpoint(host, port) { return 'http://' + host + ':' + port }
-export function walletUrl() { return new URL(CONFIG.walletPath, CONFIG.baseUrl).href }
+export function walletUrl() { return new URL(CONFIG.walletPath, CONFIG.walletBaseUrl).href }

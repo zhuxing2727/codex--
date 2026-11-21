@@ -9,6 +9,7 @@ import { CONFIG, CONFIG_DIR, WALLET_PROFILE_DIR, endpoint, walletUrl } from './e
 
 const BASE_URL = CONFIG.baseUrl
 const WALLET_URL = process.env.ERGOUZI_WALLET_URL || walletUrl()
+const ERGOUZI_ORIGINS = new Set([BASE_URL, WALLET_URL].map((value) => new URL(value).origin))
 const AGENT_URL = process.env.ERGOUZI_AGENT_URL || endpoint(CONFIG.bindHost, CONFIG.agentPort)
 const CDP_PORT = CONFIG.cdpPort
 const CDP_BASE = endpoint(CONFIG.bindHost, CDP_PORT)
@@ -90,8 +91,7 @@ export function findTokenInStorage(entries) {
 export function isErgouziUrl(value) {
   try {
     const actual = new URL(value)
-    const expected = new URL(BASE_URL)
-    return actual.origin === expected.origin && actual.protocol === 'https:'
+    return actual.protocol === 'https:' && ERGOUZI_ORIGINS.has(actual.origin)
   } catch {
     return false
   }
@@ -232,7 +232,7 @@ async function listPages() {
 
 async function choosePage() {
   const pages = await listPages()
-  const expectedOrigin = new URL(BASE_URL).origin
+  const expectedOrigin = new URL(WALLET_URL).origin
   const walletPages = pages.filter((page) => page.type === 'page' && (() => {
     try { return new URL(page.url).origin === expectedOrigin } catch { return false }
   })()).sort((left, right) => {
@@ -328,11 +328,11 @@ async function storageEntries(cdp) {
 
 async function browserCookieHeader(cdp) {
   const result = await cdp.send('Network.getCookies', { urls: [BASE_URL, WALLET_URL] })
-  const expectedHost = new URL(BASE_URL).hostname
+  const expectedHosts = [BASE_URL, WALLET_URL].map((value) => new URL(value).hostname)
   return (result.cookies || [])
     .filter((cookie) => {
       const domain = String(cookie.domain || '').replace(/^\./, '')
-      return domain === expectedHost || expectedHost.endsWith('.' + domain)
+      return expectedHosts.some((host) => domain === host || host.endsWith('.' + domain))
     })
     .map((cookie) => String(cookie.name) + '=' + String(cookie.value))
     .join('; ')
@@ -494,7 +494,7 @@ async function run() {
       controlServer.listen(CONTROL_PORT, CONFIG.bindHost, resolve)
     })
 
-    if (new URL(page.url).origin !== new URL(BASE_URL).origin) {
+    if (new URL(page.url).origin !== new URL(WALLET_URL).origin) {
       await cdp.send('Page.navigate', { url: WALLET_URL })
     } else {
       await cdp.send('Page.reload', { ignoreCache: false })
